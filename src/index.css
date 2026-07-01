@@ -1,0 +1,247 @@
+@import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Inter:wght@400;500;600&family=Press+Start+2P&family=VT323&family=Comfortaa:wght@500;600;700&family=M+PLUS+Rounded+1c:wght@400;500;700&family=MedievalSharp&family=Cinzel:wght@500;600;700&family=IM+Fell+English&family=Orbitron:wght@500;600;700;800&family=Share+Tech+Mono&family=Pirata+One&family=Cutive+Mono&family=Cabin:wght@400;500;600;700&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: light;
+  --bg: #EEF4EF;
+  --surface: #FFFFFF;
+  --ink: #143226;
+  --ink-soft: #2C4A3B;
+  --primary: #18895A;
+  --primary-bright: #2FB37A;
+  --coral: #E2563B;
+  --gold: #E8A33D;
+  --muted: #6B7C72;
+  --border: #DCE5DE;
+  --surface-warm: #fbf3e3;
+  --surface-danger: #fbeae6;
+  --font-display: 'Space Grotesk', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  --font-num: 'Space Grotesk', ui-sans-serif, system-ui, -apple-system, sans-serif;
+  --font-body: 'Inter', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  --card-shadow: 0 1px 2px rgba(20,50,38,0.04);
+  --num-scale: 1;
+}
+
+[data-theme="dark"] {
+  color-scheme: dark;
+  --bg: #0E1712;
+  --surface: #172420;
+  --ink: #EAF3EC;
+  --ink-soft: #C7D9CE;
+  --primary: #2FB37A;
+  --primary-bright: #47CC90;
+  --coral: #F17158;
+  --gold: #F0B65C;
+  --muted: #8AA093;
+  --border: #29392F;
+  --surface-warm: #2A2416;
+  --surface-danger: #2E1B18;
+}
+
+/* --- 8-Bit: retro console --- */
+[data-theme="8bit"] {
+  color-scheme: dark;
+  --bg: #0F0F1E;
+  --surface: #1B1B2F;
+  --ink: #F0F0F0;
+  --ink-soft: #C9C9D9;
+  --primary: #7EE081;
+  --primary-bright: #A4F7A8;
+  --coral: #FF5B5B;
+  --gold: #FFD93D;
+  --muted: #8888AA;
+  --border: #3A3A5C;
+  --surface-warm: #2A2440;
+  --surface-danger: #3A1620;
+  --font-display: 'Press Start 2P', ui-monospace, monospace;
+  --font-num: 'Press Start 2P', ui-monospace, monospace;
+  --font-body: 'VT323', ui-monospace, monospace;
+  --card-shadow: 4px 4px 0 rgba(0,0,0,0.6);
+  --num-scale: 0.62;
+}
+
+/* --- Lo-fi anime: dusky pastel night --- */
+[data-theme="anime"] {
+  color-scheme: dark;
+  --bg: #1F1A2E;
+  --surface: #2A2340;
+  --ink: #F5E6F0;
+  --ink-soft: #D8C2DF;
+  --primary: #8FD9C4;
+  --primary-bright: #A8E6D3;
+  --coral: #FF8FA3;
+  --gold: #FFD97D;
+  --muted: #9C8AAD;
+  --border: #3D3555;
+  --surface-warm: #3A2F4A;
+  --surface-danger: #3A2030;
+  --font-display: 'Comfortaa', ui-rounded, sans-serif;
+  --font-num: 'Comfortaa', ui-rounded, sans-serif;
+  --font-body: 'M PLUS Rounded 1c', ui-rounded, sans-serif;
+  --card-shadow: 0 4px 24px rgba(255,158,203,0.15);
+}
+
+/* --- Medieval: torch-lit tavern --- */
+[data-theme="medieval"] {
+  color-scheme: dark;
+  --bg: #1E140D;
+  --surface: #2F2013;
+  --ink: #F0E4C8;
+  --ink-soft: #D4C19A;
+  --primary: #5F8F5A;
+  --primary-bright: #7CAE76;
+  --coral: #B5442E;
+  --gold: #C9A24B;
+  --muted: #9C8865;
+  --border: #4A3A24;
+  --surface-warm: #3D2A15;
+  --surface-danger: #3A1810;
+  --font-display: 'MedievalSharp', cursive;
+  --font-num: 'Cinzel', serif;
+  --font-body: 'IM Fell English', serif;
+  --card-shadow: inset 0 0 0 1px rgba(201,162,75,0.2), 0 2px 8px rgba(0,0,0,0.5);
+}
+
+/* --- Cyberpunk: neon night city --- */
+[data-theme="cyberpunk"] {
+  color-scheme: dark;
+  --bg: #05060F;
+  --surface: #0D0F1F;
+  --ink: #E6F7FF;
+  --ink-soft: #A8D8E8;
+  --primary: #39FF88;
+  --primary-bright: #66FFAA;
+  --coral: #FF2E6E;
+  --gold: #FFE14D;
+  --muted: #6B7D9C;
+  --border: #1E3A5F;
+  --surface-warm: #1A1030;
+  --surface-danger: #2A0A1A;
+  --font-display: 'Orbitron', sans-serif;
+  --font-num: 'Orbitron', sans-serif;
+  --font-body: 'Share Tech Mono', ui-monospace, monospace;
+  --card-shadow: 0 0 12px rgba(57,255,136,0.25), 0 0 2px rgba(57,255,136,0.4);
+  --num-scale: 0.78;
+}
+
+/* --- Pirate: night ocean, weathered wood & doubloons --- */
+[data-theme="pirate"] {
+  color-scheme: dark;
+  --bg: #0D1B1E;
+  --surface: #1A2E2F;
+  --ink: #F0E6C8;
+  --ink-soft: #CBB98F;
+  --primary: #4A9E7A;
+  --primary-bright: #63C096;
+  --coral: #C1443A;
+  --gold: #D4A13D;
+  --muted: #7A9490;
+  --border: #2F4A45;
+  --surface-warm: #2E2412;
+  --surface-danger: #34120F;
+  --font-display: 'Pirata One', cursive;
+  --font-num: 'Cutive Mono', ui-monospace, monospace;
+  --font-body: 'Cabin', ui-sans-serif, sans-serif;
+  --card-shadow: 0 2px 10px rgba(0,0,0,0.6), inset 0 0 0 1px rgba(212,161,61,0.15);
+}
+
+/* --- Pixel Kitty: light pink & black, 8-bit hard edges --- */
+[data-theme="pixelkitty"] {
+  color-scheme: dark;
+  --bg: #0A0A0A;
+  --surface: #161217;
+  --ink: #FFE6F3;
+  --ink-soft: #F2B8D8;
+  --primary: #7CE8B0;
+  --primary-bright: #9FF4C6;
+  --coral: #FF5C8A;
+  --gold: #FFD966;
+  --muted: #B98CA8;
+  --border: #FF8FC2;
+  --surface-warm: #241018;
+  --surface-danger: #2E0A18;
+  --font-display: 'Press Start 2P', ui-monospace, monospace;
+  --font-num: 'Press Start 2P', ui-monospace, monospace;
+  --font-body: 'VT323', ui-monospace, monospace;
+  --card-shadow: 4px 4px 0 rgba(255,143,194,0.35);
+  --num-scale: 0.62;
+}
+
+html, body, #root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  -webkit-font-smoothing: antialiased;
+  font-family: var(--font-body);
+  transition: background 0.2s ease;
+}
+
+.ff-display { font-family: var(--font-display); }
+.ff-num { font-family: var(--font-num); font-variant-numeric: tabular-nums; }
+.ff-body { font-family: var(--font-body); }
+
+* { -webkit-tap-highlight-color: transparent; }
+
+input[type=number]::-webkit-outer-spin-button,
+input[type=number]::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+input[type=number] { -moz-appearance: textfield; }
+
+@keyframes shk { 0%,100% { transform: translateX(0); } 25% { transform: translateX(-8px); } 75% { transform: translateX(8px); } }
+
+/* --- per-theme accent shapes (kept surgical: just corner radius + a couple of flourishes) --- */
+[data-theme="8bit"] .rounded-3xl, [data-theme="8bit"] .rounded-2xl, [data-theme="8bit"] .rounded-xl { border-radius: 4px; }
+[data-theme="medieval"] .rounded-3xl, [data-theme="medieval"] .rounded-2xl, [data-theme="medieval"] .rounded-xl { border-radius: 6px; }
+[data-theme="cyberpunk"] .rounded-3xl, [data-theme="cyberpunk"] .rounded-2xl, [data-theme="cyberpunk"] .rounded-xl { border-radius: 2px; }
+[data-theme="anime"] .rounded-3xl, [data-theme="anime"] .rounded-2xl, [data-theme="anime"] .rounded-xl { border-radius: 28px; }
+[data-theme="pirate"] .rounded-3xl, [data-theme="pirate"] .rounded-2xl, [data-theme="pirate"] .rounded-xl { border-radius: 8px; }
+[data-theme="pixelkitty"] .rounded-3xl, [data-theme="pixelkitty"] .rounded-2xl, [data-theme="pixelkitty"] .rounded-xl { border-radius: 4px; }
+[data-theme="pixelkitty"] .ff-display { letter-spacing: 0.04em; text-transform: uppercase; }
+
+[data-theme="cyberpunk"] .ff-display, [data-theme="8bit"] .ff-display { letter-spacing: 0.04em; text-transform: uppercase; }
+[data-theme="cyberpunk"] .ff-display { text-shadow: 0 0 8px currentColor; }
+
+/* --- theme mascot + ambient fx animations (toggled off via settings.themeFx, or
+     paused for prefers-reduced-motion) --- */
+.fx-panel { position: relative; overflow: hidden; }
+.fx-decor { position: absolute; pointer-events: none; }
+
+@keyframes fx-float-up {
+  0% { transform: translateY(0) scale(1); opacity: 0; }
+  15% { opacity: 1; }
+  100% { transform: translateY(-64px) scale(0.6); opacity: 0; }
+}
+@keyframes fx-flicker {
+  0%, 100% { opacity: 0.85; transform: scale(1); }
+  50% { opacity: 1; transform: scale(1.06); }
+}
+@keyframes fx-scanline {
+  0% { transform: translateY(-100%); }
+  100% { transform: translateY(280%); }
+}
+@keyframes fx-bob {
+  0%, 100% { transform: rotate(-3deg) translateY(0); }
+  50% { transform: rotate(3deg) translateY(-3px); }
+}
+@keyframes fx-blink {
+  0%, 90%, 100% { transform: scaleY(1); }
+  95% { transform: scaleY(0.1); }
+}
+
+.fx-pixel { width: 6px; height: 6px; animation: fx-float-up 2.6s ease-in infinite; }
+.fx-sparkle { border-radius: 50%; animation: fx-float-up 3.2s ease-in infinite; }
+.fx-bubble { border-radius: 50%; animation: fx-float-up 3.8s ease-in infinite; }
+.fx-torch-glow { border-radius: 50%; animation: fx-flicker 1.8s ease-in-out infinite; filter: blur(6px); }
+.fx-scan-bar { animation: fx-scanline 2.4s linear infinite; }
+.fx-mascot-bob { animation: fx-bob 3.4s ease-in-out infinite; transform-origin: 50% 90%; }
+.fx-eye-blink { animation: fx-blink 4.5s ease-in-out infinite; transform-origin: center; }
+.fx-heart { animation: fx-float-up 3s ease-in infinite; }
+
+@media (prefers-reduced-motion: reduce) {
+  .fx-pixel, .fx-sparkle, .fx-bubble, .fx-torch-glow, .fx-scan-bar, .fx-mascot-bob, .fx-eye-blink, .fx-heart { animation: none !important; }
+}
