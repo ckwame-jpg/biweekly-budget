@@ -1,6 +1,7 @@
 // Reactive per-theme mascot + idle ambient effects. Purely decorative — gated by
 // settings.themeFx and skipped entirely for prefers-reduced-motion or the
 // "classic" theme, so it never affects the math or layout of a screen.
+import { useState, useRef, useEffect } from "react";
 import { C } from "../lib/theme.js";
 
 /* ---------- 8-bit: pixel-grid face, drawn as an 8x8 rect matrix ---------- */
@@ -143,13 +144,16 @@ function PirateMascot({ mood }) {
   );
 }
 
-/* ---------- Pixel Kitty: cat mascot recolored per mood, with a vine + tree behind it ---------- */
-function CatMascot({ mood }) {
-  const palette = {
-    happy: { base: "#FFFFFF", patch: "#FF8FC2" },     // pink & white
-    neutral: { base: "#FBF3E6", patch: "#8B5A2B" },   // white & brown
-    worried: { base: "#E8D2A6", patch: "#6B4423" },   // tabby
-  }[mood];
+/* ---------- Pixel Kitty: cat face recolored per mood — shared by the side-panel
+   mascot (with a vine + tree behind it) and the interactive chart-center cat ---------- */
+const CAT_PALETTE = {
+  happy: { base: "#FFFFFF", patch: "#FF8FC2" },     // pink & white
+  neutral: { base: "#FBF3E6", patch: "#8B5A2B" },   // white & brown
+  worried: { base: "#E8D2A6", patch: "#6B4423" },   // tabby
+};
+
+function CatFace({ mood }) {
+  const palette = CAT_PALETTE[mood];
   const eyes = {
     happy: <path d="M22 30 Q25 27 28 30 M36 30 Q39 27 42 30" stroke="#2B1A22" strokeWidth="2" fill="none" strokeLinecap="round" />,
     neutral: <g fill="#2B1A22"><ellipse cx="24" cy="30" rx="2.2" ry="3" /><ellipse cx="42" cy="30" rx="2.2" ry="3" /></g>,
@@ -158,18 +162,7 @@ function CatMascot({ mood }) {
   }[mood];
   const isTabby = mood === "worried";
   return (
-    <svg viewBox="0 0 64 64" width="56" height="56" className="fx-mascot-bob">
-      {/* tree + vine, tucked behind the cat */}
-      <g opacity="0.6">
-        <rect x="3" y="47" width="4" height="13" fill="#5A3A22" />
-        <circle cx="5" cy="43" r="7" fill="#3B6B4A" />
-        <circle cx="1" cy="46" r="5" fill="#345C40" />
-        <circle cx="9" cy="46" r="5" fill="#3B6B4A" />
-        <path d="M2 2 Q10 8 6 16 Q2 24 8 30" stroke="#4C8C5A" strokeWidth="2" fill="none" strokeLinecap="round" />
-        <ellipse cx="7" cy="10" rx="3" ry="1.6" fill="#5FAE6E" transform="rotate(30 7 10)" />
-        <ellipse cx="4" cy="20" rx="3" ry="1.6" fill="#5FAE6E" transform="rotate(-20 4 20)" />
-      </g>
-
+    <>
       {/* ears */}
       <path d="M14 16 L20 3 L27 18Z" fill={palette.patch} stroke="#2B1A22" strokeWidth="1" />
       <path d="M37 18 L44 3 L50 16Z" fill={palette.patch} stroke="#2B1A22" strokeWidth="1" />
@@ -195,7 +188,56 @@ function CatMascot({ mood }) {
         <path d="M11 34 L21 33 M11 38 L21 37 M11 42 L21 40" />
         <path d="M53 34 L43 33 M53 38 L43 37 M53 42 L43 40" />
       </g>
+    </>
+  );
+}
+
+function CatMascot({ mood }) {
+  return (
+    <svg viewBox="0 0 64 64" width="56" height="56" className="fx-mascot-bob">
+      {/* tree + vine, tucked behind the cat */}
+      <g opacity="0.6">
+        <rect x="3" y="47" width="4" height="13" fill="#5A3A22" />
+        <circle cx="5" cy="43" r="7" fill="#3B6B4A" />
+        <circle cx="1" cy="46" r="5" fill="#345C40" />
+        <circle cx="9" cy="46" r="5" fill="#3B6B4A" />
+        <path d="M2 2 Q10 8 6 16 Q2 24 8 30" stroke="#4C8C5A" strokeWidth="2" fill="none" strokeLinecap="round" />
+        <ellipse cx="7" cy="10" rx="3" ry="1.6" fill="#5FAE6E" transform="rotate(30 7 10)" />
+        <ellipse cx="4" cy="20" rx="3" ry="1.6" fill="#5FAE6E" transform="rotate(-20 4 20)" />
+      </g>
+      <CatFace mood={mood} />
     </svg>
+  );
+}
+
+// A tappable cat for the middle of a donut chart's hollow center. Purely playful —
+// taps just cycle a little speech bubble, nothing here touches app state/math.
+const TAP_REACTIONS = ["Mrrp?", "Purrr~", "Nya!", ":3", "≽^•⩊•^≼"];
+
+export function ChartCat({ mood, enabled }) {
+  const [tapCount, setTapCount] = useState(0);
+  const [bubble, setBubble] = useState(null);
+  const timeoutRef = useRef(null);
+
+  useEffect(() => () => { if (timeoutRef.current) clearTimeout(timeoutRef.current); }, []);
+
+  if (!enabled) return null;
+
+  const handleTap = () => {
+    setTapCount((c) => c + 1);
+    setBubble(TAP_REACTIONS[Math.floor(Math.random() * TAP_REACTIONS.length)]);
+    if (timeoutRef.current) clearTimeout(timeoutRef.current);
+    timeoutRef.current = setTimeout(() => setBubble(null), 1200);
+  };
+
+  return (
+    <button onClick={handleTap} aria-label="Pet the cat"
+      style={{ background: "none", border: "none", padding: 0, cursor: "pointer", position: "absolute", top: "50%", left: "50%", transform: "translate(-50%, -50%)" }}>
+      {bubble && <div className="fx-tap-bubble" style={{ position: "absolute", top: -22, left: "50%" }}>{bubble}</div>}
+      <svg key={tapCount} viewBox="0 0 64 64" width="60" height="60" className={"fx-chart-cat" + (tapCount > 0 ? " fx-poke" : "")}>
+        <CatFace mood={mood} />
+      </svg>
+    </button>
   );
 }
 
@@ -225,13 +267,23 @@ function AmbientFx({ theme }) {
     ));
   }
   if (theme === "pixelkitty") {
-    // hollow (outline-only) pixel hearts drifting up
-    return [0, 1, 2].map((i) => (
-      <svg key={i} viewBox="0 0 10 10" className="fx-decor fx-heart" width="10" height="10"
-        style={{ left: 6 + i * 18 + "px", bottom: 0, animationDelay: i * 0.8 + "s" }}>
+    // hollow (outline-only) pixel hearts, plus tiny cat-head silhouettes, drifting up
+    const hearts = [0, 1, 2, 3, 4].map((i) => (
+      <svg key={"h" + i} viewBox="0 0 10 10" className="fx-decor fx-heart" width={i % 2 ? 8 : 11} height={i % 2 ? 8 : 11}
+        style={{ left: 2 + i * 13 + "px", bottom: 0, animationDelay: i * 0.6 + "s" }}>
         <path d="M5 9 L1 5 A2 2 0 0 1 5 2 A2 2 0 0 1 9 5 Z" fill="none" stroke={C.border} strokeWidth="1.2" />
       </svg>
     ));
+    const catColors = [C.primary, "#8B5A2B", "#FF8FC2"];
+    const cats = [0, 1, 2].map((i) => (
+      <svg key={"c" + i} viewBox="0 0 12 12" className="fx-decor fx-heart" width="10" height="10"
+        style={{ right: 4 + i * 16 + "px", bottom: 0, animationDelay: 0.4 + i * 0.7 + "s" }}>
+        <path d="M2 4 L3.5 1 L5 4Z" fill={catColors[i]} />
+        <path d="M7 4 L8.5 1 L10 4Z" fill={catColors[i]} />
+        <circle cx="6" cy="6.5" r="4" fill={catColors[i]} />
+      </svg>
+    ));
+    return [...hearts, ...cats];
   }
   return null;
 }

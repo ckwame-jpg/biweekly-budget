@@ -4,11 +4,12 @@
 // so the bi-weekly view and the profit view always agree.
 
 export const DEFAULT_STATE = {
-  settings: { name: "", pinEnabled: false, pin: "", darkMode: false, theme: "classic", themeFx: true },
+  settings: { name: "", pinEnabled: false, pin: "", darkMode: false, theme: "classic", themeFx: true, hasSeenWelcome: false },
   goal: 200, // bi-weekly savings goal ($)
   savingsRateGoal: 0.2, // target share of income saved (decimal, e.g. 0.2 = 20%)
-  monthlyPaychecks: 2, // 2 = normal month, 3 = bonus month
-  periodStart: new Date().toISOString().slice(0, 10), // start of the current 14-day cycle
+  monthlyPaychecks: 2, // 2/3 (biweekly), 4/5 (weekly), or 1 (by the job)
+  payFrequency: "biweekly", // "biweekly" | "weekly" | "job"
+  periodStart: new Date().toISOString().slice(0, 10), // start of the current pay cycle
   income: [
     { id: "inc_p1", name: "Paycheck #1", amount: 1600 },
     { id: "inc_p2", name: "Paycheck #2", amount: 0 },

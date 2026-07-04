@@ -241,7 +241,75 @@ input[type=number] { -moz-appearance: textfield; }
 .fx-mascot-bob { animation: fx-bob 3.4s ease-in-out infinite; transform-origin: 50% 90%; }
 .fx-eye-blink { animation: fx-blink 4.5s ease-in-out infinite; transform-origin: center; }
 .fx-heart { animation: fx-float-up 3s ease-in infinite; }
+.fx-chart-cat { animation: fx-bob 3.4s ease-in-out infinite; transform-origin: 50% 90%; }
+
+@keyframes fx-poke {
+  0% { transform: scale(1); }
+  30% { transform: scale(0.85, 1.15); }
+  60% { transform: scale(1.1, 0.9); }
+  100% { transform: scale(1); }
+}
+.fx-chart-cat.fx-poke { animation: fx-bob 3.4s ease-in-out infinite, fx-poke 0.4s ease-out; }
+
+@keyframes fx-bubble-pop {
+  0% { opacity: 0; transform: translate(-50%, 4px) scale(0.8); }
+  15% { opacity: 1; transform: translate(-50%, 0) scale(1); }
+  80% { opacity: 1; }
+  100% { opacity: 0; transform: translate(-50%, -6px) scale(0.9); }
+}
+.fx-tap-bubble {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  color: var(--ink);
+  font-family: var(--font-body);
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 10px;
+  white-space: nowrap;
+  animation: fx-bubble-pop 1.2s ease-out forwards;
+  pointer-events: none;
+}
 
 @media (prefers-reduced-motion: reduce) {
-  .fx-pixel, .fx-sparkle, .fx-bubble, .fx-torch-glow, .fx-scan-bar, .fx-mascot-bob, .fx-eye-blink, .fx-heart { animation: none !important; }
+  .fx-pixel, .fx-sparkle, .fx-bubble, .fx-torch-glow, .fx-scan-bar, .fx-mascot-bob, .fx-eye-blink, .fx-heart,
+  .fx-chart-cat, .fx-chart-cat.fx-poke, .fx-tap-bubble { animation: none !important; }
+}
+
+.app-root { background: var(--bg); }
+
+/* Pixel Kitty: a faint vine texture behind the whole app (visible in the gaps
+   around cards) — the tab bar has its own opaque background, so it's naturally
+   unaffected by this. */
+[data-theme="pixelkitty"] .app-root {
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='80' height='120' viewBox='0 0 80 120'%3E%3Cpath d='M4 0 Q20 20 4 40 Q-12 60 4 80 Q20 100 4 120' stroke='%234C8C5A' stroke-width='2' fill='none' opacity='0.12'/%3E%3Cellipse cx='18' cy='16' rx='4' ry='2' fill='%235FAE6E' opacity='0.1' transform='rotate(35 18 16)'/%3E%3Cellipse cx='-10' cy='50' rx='4' ry='2' fill='%235FAE6E' opacity='0.1' transform='rotate(-35 -10 50)'/%3E%3Cellipse cx='18' cy='84' rx='4' ry='2' fill='%235FAE6E' opacity='0.1' transform='rotate(35 18 84)'/%3E%3Cellipse cx='-10' cy='110' rx='4' ry='2' fill='%235FAE6E' opacity='0.1' transform='rotate(-35 -10 110)'/%3E%3C/svg%3E");
+  background-repeat: repeat;
+  background-size: 80px 120px;
+}
+
+/* --- bottom nav ("the tabs") --- */
+.bottom-nav {
+  position: relative;
+  background: var(--surface);
+  border-top: 1px solid var(--border);
+  padding-bottom: 6px;
+  padding-bottom: calc(6px + env(safe-area-inset-bottom, 0px));
+}
+
+/* Pixel Kitty: a vine trailing along the tab bar's top border, and a faint
+   vine texture woven through its background. */
+[data-theme="pixelkitty"] .bottom-nav {
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='44' height='64' viewBox='0 0 44 64'%3E%3Cpath d='M2 0 Q14 16 2 32 Q-8 48 2 64' stroke='%234C8C5A' stroke-width='1.5' fill='none' opacity='0.25'/%3E%3Cellipse cx='12' cy='14' rx='3' ry='1.6' fill='%235FAE6E' opacity='0.22' transform='rotate(35 12 14)'/%3E%3Cellipse cx='-6' cy='40' rx='3' ry='1.6' fill='%235FAE6E' opacity='0.22' transform='rotate(-35 -6 40)'/%3E%3Cellipse cx='10' cy='56' rx='3' ry='1.6' fill='%235FAE6E' opacity='0.22' transform='rotate(35 10 56)'/%3E%3C/svg%3E");
+  background-repeat: repeat;
+  background-size: 44px 64px;
+}
+[data-theme="pixelkitty"] .bottom-nav::before {
+  content: "";
+  position: absolute;
+  top: -7px;
+  left: 0;
+  right: 0;
+  height: 7px;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='36' height='10' viewBox='0 0 36 10'%3E%3Cpath d='M0 5 Q9 -1 18 5 T36 5' stroke='%234C8C5A' stroke-width='1.5' fill='none'/%3E%3Cellipse cx='9' cy='2' rx='2.2' ry='1.2' fill='%235FAE6E' transform='rotate(35 9 2)'/%3E%3Cellipse cx='27' cy='8' rx='2.2' ry='1.2' fill='%235FAE6E' transform='rotate(-35 27 8)'/%3E%3C/svg%3E");
+  background-repeat: repeat-x;
+  background-size: 36px 7px;
 }

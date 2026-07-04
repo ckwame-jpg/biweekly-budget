@@ -29,5 +29,8 @@ export default defineConfig({
         globPatterns: ["**/*.{js,css,html,svg,png,woff2}"]
       }
     })
-  ]
+  ],
+  test: {
+    exclude: ["e2e/**", "node_modules/**"],
+  },
 });

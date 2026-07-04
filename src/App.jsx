@@ -9,7 +9,7 @@ import {
 } from "recharts";
 
 import { C, GROUP_KEYS, GROUP_META, THEMES } from "./lib/theme.js";
-import { ThemeMascotPanel } from "./components/ThemeMascot.jsx";
+import { ThemeMascotPanel, ChartCat } from "./components/ThemeMascot.jsx";
 import { DEFAULT_STATE } from "./lib/defaults.js";
 import { num, fmt, fmtSigned, pct, fmtDate, cyclePosition } from "./lib/format.js";
 import { useCalc } from "./lib/calc.js";
@@ -180,6 +180,11 @@ function GoalCard({ state, calc }) {
 }
 
 /* ============================== screens ============================== */
+// Cycle length in days for each pay frequency. "job" has no fixed cycle (0 = none).
+function cycleDaysFor(freq) {
+  return freq === "weekly" ? 7 : freq === "job" ? 0 : 14;
+}
+
 function Dashboard({ state, calc, setScreen }) {
   const reduced = useReducedMotion();
   const hero = useCountUp(calc.leftOverBudget, reduced);
@@ -193,7 +198,7 @@ function Dashboard({ state, calc, setScreen }) {
     .map((k) => ({ name: GROUP_META[k].label, value: calc.groupBudget[k], color: GROUP_META[k].color }))
     .filter((d) => d.value > 0);
   const leftToSpend = calc.expenseBudget - calc.spentSoFar;
-  const cycle = cyclePosition(state.periodStart);
+  const cycle = cyclePosition(state.periodStart, cycleDaysFor(state.payFrequency));
 
   return (
     <div className="px-4 pb-2">
@@ -204,7 +209,7 @@ function Dashboard({ state, calc, setScreen }) {
         </div>
         {cycle && (
           <div className="ff-body" style={{ color: "rgba(255,255,255,0.6)", fontSize: 11, marginTop: 3 }}>
-            Day {cycle.day} of 14 · Week {cycle.week}
+            Day {cycle.day} of {cycle.cycleDays}{cycle.week ? ` · Week ${cycle.week}` : ""}
           </div>
         )}
         <div className="ff-num" style={{ color: "#fff", fontSize: "3.4rem", fontWeight: 700, lineHeight: 1.05, marginTop: 6, fontVariantNumeric: "tabular-nums" }}>{fmt(hero)}</div>
@@ -245,7 +250,7 @@ function Dashboard({ state, calc, setScreen }) {
 
       <SectionTitle>Where it goes</SectionTitle>
       <Card className="p-4">
-        <div style={{ height: 200 }}>
+        <div style={{ height: 200, position: "relative" }}>
           <ResponsiveContainer width="100%" height="100%">
             <PieChart>
               <Pie data={donutData} dataKey="value" nameKey="name" innerRadius={52} outerRadius={84} paddingAngle={2} stroke="none">
@@ -254,6 +259,7 @@ function Dashboard({ state, calc, setScreen }) {
               <Tooltip formatter={(v) => fmt(v)} contentStyle={{ borderRadius: 12, border: `1px solid ${C.border}`, fontSize: 12 }} />
             </PieChart>
           </ResponsiveContainer>
+          <ChartCat mood={mood} enabled={state.settings.themeFx && state.settings.theme === "pixelkitty"} />
         </div>
         <div className="flex flex-wrap gap-x-4 gap-y-1 mt-2 px-1">
           {donutData.map((d, i) => (
@@ -333,7 +339,9 @@ function BudgetScreen({ state, setState, calc }) {
 }
 
 function TrackScreen({ state, setState, calc, onSavePeriod }) {
-  const [week, setWeek] = useState("week1");
+  const showWeeks = (state.payFrequency || "biweekly") === "biweekly";
+  const [weekTab, setWeekTab] = useState("week1");
+  const week = showWeeks ? weekTab : "week1"; // weekly/job frequencies just use one bucket
   const setActual = (id, v) => setState((s) => ({ ...s, period: { ...s.period, [week]: { ...s.period[week], [id]: v } } }));
   const setCogs = (k, v) => setState((s) => ({ ...s, period: { ...s.period, cogs: { ...s.period.cogs, [k]: v } } }));
 
@@ -345,16 +353,18 @@ function TrackScreen({ state, setState, calc, onSavePeriod }) {
 
   return (
     <div className="px-4 pb-2">
-      <div className="flex gap-1 p-1 rounded-2xl mt-3" style={{ background: C.surface, border: `1px solid ${C.border}` }}>
-        {["week1", "week2"].map((w) => (
-          <button key={w} onClick={() => setWeek(w)} className="flex-1 rounded-xl py-2 ff-body"
-            style={{ background: week === w ? C.primary : "transparent", color: week === w ? "#fff" : C.muted, fontWeight: 600, fontSize: 14 }}>
-            {w === "week1" ? "Week 1" : "Week 2"}
-          </button>
-        ))}
-      </div>
+      {showWeeks && (
+        <div className="flex gap-1 p-1 rounded-2xl mt-3" style={{ background: C.surface, border: `1px solid ${C.border}` }}>
+          {["week1", "week2"].map((w) => (
+            <button key={w} onClick={() => setWeekTab(w)} className="flex-1 rounded-xl py-2 ff-body"
+              style={{ background: week === w ? C.primary : "transparent", color: week === w ? "#fff" : C.muted, fontWeight: 600, fontSize: 14 }}>
+              {w === "week1" ? "Week 1" : "Week 2"}
+            </button>
+          ))}
+        </div>
+      )}
 
-      <SectionTitle>Income — {week === "week1" ? "Week 1" : "Week 2"}</SectionTitle>
+      <SectionTitle>{showWeeks ? `Income — ${week === "week1" ? "Week 1" : "Week 2"}` : "Income"}</SectionTitle>
       <Card className="px-4 py-2">
         {state.income.map((l) => (
           <TrackRow key={l.id} name={l.name} value={state.period[week][l.id]} onChange={(v) => setActual(l.id, v)} total={calc.lineActual(l.id)} budget={l.amount} />
@@ -416,7 +426,7 @@ function TrackScreen({ state, setState, calc, onSavePeriod }) {
       </Card>
 
       <GoalCard state={state} calc={calc} />
-      <button onClick={onSavePeriod} className="w-full mt-4 flex items-center justify-center gap-2 rounded-2xl py-3.5" style={{ background: C.ink, color: "#fff" }}>
+      <button onClick={onSavePeriod} className="w-full mt-4 flex items-center justify-center gap-2 rounded-2xl py-3.5" style={{ background: C.primary, color: "#fff" }}>
         <ArrowDownToLine size={18} /> <span className="ff-body" style={{ fontWeight: 600, fontSize: 15 }}>Save this period to history</span>
       </button>
       <div className="ff-body text-center mt-2 mb-1" style={{ color: C.muted, fontSize: 12 }}>
@@ -427,6 +437,9 @@ function TrackScreen({ state, setState, calc, onSavePeriod }) {
 }
 
 function MonthlyScreen({ state, setState, calc }) {
+  const freq = state.payFrequency || "biweekly";
+  const paycheckOptions = freq === "weekly" ? [4, 5] : freq === "job" ? [1] : [2, 3];
+  const bonusCount = paycheckOptions[paycheckOptions.length - 1];
   const m = state.monthlyPaychecks;
   const setActual = (g, v) => setState((s) => ({ ...s, monthlyActual: { ...s.monthlyActual, [g]: v } }));
   const incomeM = calc.incomeBudget * m;
@@ -437,14 +450,16 @@ function MonthlyScreen({ state, setState, calc }) {
 
   return (
     <div className="px-4 pb-2">
-      <div className="flex gap-1 p-1 rounded-2xl mt-3" style={{ background: C.surface, border: `1px solid ${C.border}` }}>
-        {[2, 3].map((n) => (
-          <button key={n} onClick={() => setState((s) => ({ ...s, monthlyPaychecks: n }))} className="flex-1 rounded-xl py-2 ff-body"
-            style={{ background: m === n ? C.primary : "transparent", color: m === n ? "#fff" : C.muted, fontWeight: 600, fontSize: 13 }}>
-            {n === 2 ? "Normal month (2 paychecks)" : "Bonus month (3 paychecks)"}
-          </button>
-        ))}
-      </div>
+      {paycheckOptions.length > 1 && (
+        <div className="flex gap-1 p-1 rounded-2xl mt-3" style={{ background: C.surface, border: `1px solid ${C.border}` }}>
+          {paycheckOptions.map((n) => (
+            <button key={n} onClick={() => setState((s) => ({ ...s, monthlyPaychecks: n }))} className="flex-1 rounded-xl py-2 ff-body"
+              style={{ background: m === n ? C.primary : "transparent", color: m === n ? "#fff" : C.muted, fontWeight: 600, fontSize: 13 }}>
+              {n === bonusCount ? `Bonus month (${n} paychecks)` : `Normal month (${n} paychecks)`}
+            </button>
+          ))}
+        </div>
+      )}
 
       <SectionTitle>Budget vs actual</SectionTitle>
       <Card className="px-4 py-3">
@@ -483,7 +498,7 @@ function MonthlyScreen({ state, setState, calc }) {
         <Row k="Savings rate" v={pct(incomeM ? savingsM / incomeM : 0)} />
       </Card>
 
-      {m === 3 && (
+      {paycheckOptions.length > 1 && m === bonusCount && (
         <>
           <SectionTitle>Your bonus paycheck</SectionTitle>
           <Card className="p-4" style={{ background: C.surfaceWarm }}>
@@ -491,7 +506,7 @@ function MonthlyScreen({ state, setState, calc }) {
               <Sparkles size={18} color={C.gold} />
               <span className="ff-display" style={{ color: C.ink, fontWeight: 600, fontSize: 15 }}>{fmt(extra)} extra this month</span>
             </div>
-            <div className="ff-body mt-1 mb-3" style={{ color: C.muted, fontSize: 13 }}>A 3-paycheck month gives you one full extra paycheck. Suggested split:</div>
+            <div className="ff-body mt-1 mb-3" style={{ color: C.muted, fontSize: 13 }}>A {bonusCount}-paycheck month gives you one full extra paycheck. Suggested split:</div>
             <Row k="50% → extra debt payment" v={fmt(extra * 0.5)} color={C.coral} />
             <Row k="30% → savings" v={fmt(extra * 0.3)} color={C.primary} />
             <Row k="20% → fun money" v={fmt(extra * 0.2)} color={C.gold} />
@@ -503,11 +518,21 @@ function MonthlyScreen({ state, setState, calc }) {
 }
 
 function AnnualScreen({ state, calc, setState }) {
-  const baseNet = calc.netProfit;
-  const baseIncome = calc.anyActual ? calc.incomeActual : calc.incomeBudget;
-  const baseExp = calc.anyActual ? calc.spentSoFar : calc.expenseBudget;
-  const annualIncome = baseIncome * 26, annualExp = baseExp * 26, annualNet = baseNet * 26;
-  const extraPerYear = (calc.anyActual ? calc.lineActual("inc_bonus") : num(state.income.find((i) => i.id === "inc_bonus")?.amount)) * 26;
+  const freq = state.payFrequency || "biweekly";
+  const periodsPerYear = freq === "weekly" ? 52 : freq === "job" ? 12 : 26;
+  const weeksPerPeriod = freq === "weekly" ? 1 : freq === "job" ? 52 / 12 : 2;
+
+  // "By the job" has no fixed cycle, so project off a trailing average of saved
+  // periods instead of one snapshot — more honest for irregular income.
+  const recentJobHistory = freq === "job" ? state.history.slice(-3) : [];
+  const useTrailingAvg = freq === "job" && recentJobHistory.length > 0;
+  const avg = (key) => recentJobHistory.reduce((a, h) => a + h[key], 0) / recentJobHistory.length;
+
+  const baseNet = useTrailingAvg ? avg("netProfit") : calc.netProfit;
+  const baseIncome = useTrailingAvg ? avg("income") : (calc.anyActual ? calc.incomeActual : calc.incomeBudget);
+  const baseExp = useTrailingAvg ? avg("totalExpenses") : (calc.anyActual ? calc.spentSoFar : calc.expenseBudget);
+  const annualIncome = baseIncome * periodsPerYear, annualExp = baseExp * periodsPerYear, annualNet = baseNet * periodsPerYear;
+  const extraPerYear = (calc.anyActual ? calc.lineActual("inc_bonus") : num(state.income.find((i) => i.id === "inc_bonus")?.amount)) * periodsPerYear;
 
   const proj = [
     { name: "Income", value: annualIncome, color: C.primary },
@@ -518,7 +543,7 @@ function AnnualScreen({ state, calc, setState }) {
   const milestones = [
     { label: "Projected annual net", value: fmt(annualNet), color: annualNet >= 0 ? C.primary : C.coral },
     { label: "Monthly avg profit", value: fmt(annualNet / 12) },
-    { label: "Weeks to $500 fund", value: baseNet > 0 ? Math.ceil((500 / baseNet) * 2) + " wks" : "—" },
+    { label: "Weeks to $500 fund", value: baseNet > 0 ? Math.ceil(500 / baseNet * weeksPerPeriod) + " wks" : "—" },
     { label: "Years to $10k saved", value: annualNet > 0 ? (10000 / annualNet).toFixed(1) + " yrs" : "—" },
     { label: "Extra money / year", value: fmt(extraPerYear) },
     { label: "Bonus paycheck value", value: fmt(calc.incomeBudget) },
@@ -532,7 +557,13 @@ function AnnualScreen({ state, calc, setState }) {
   return (
     <div className="px-4 pb-2">
       <SectionTitle>Annual projection</SectionTitle>
-      <div className="ff-body px-1 mb-2" style={{ color: C.muted, fontSize: 12 }}>Based on this period × 26 pay periods.</div>
+      <div className="ff-body px-1 mb-2" style={{ color: C.muted, fontSize: 12 }}>
+        {useTrailingAvg
+          ? `Based on the average of your last ${recentJobHistory.length} saved period${recentJobHistory.length > 1 ? "s" : ""} × 12 months.`
+          : freq === "job"
+            ? "Based on this period × 12 months — save a few periods for a steadier average."
+            : `Based on this period × ${periodsPerYear} pay periods.`}
+      </div>
       <Card className="p-4">
         <div style={{ height: 190 }}>
           <ResponsiveContainer width="100%" height="100%">
@@ -653,6 +684,61 @@ function exportHistoryCsv(state) {
   downloadFile(`biweekly-budget-history-${stamp}.csv`, csv, "text/csv");
 }
 
+function WelcomeSheet({ name, onClose }) {
+  return (
+    <div className="fixed inset-0 flex items-end justify-center" style={{ background: "rgba(20,50,38,0.4)", zIndex: 70 }} onClick={onClose}>
+      <div className="w-full rounded-t-3xl p-5" style={{ background: C.surface, maxWidth: 480, maxHeight: "90vh", overflowY: "auto" }} onClick={(e) => e.stopPropagation()}>
+        <div className="flex justify-center mb-3">
+          <span style={{ width: 40, height: 4, borderRadius: 2, background: C.border, display: "block" }} />
+        </div>
+        <span className="ff-display block" style={{ color: C.ink, fontSize: 20, fontWeight: 700 }}>
+          {name ? `Welcome, ${name}!` : "Welcome!"}
+        </span>
+        <div className="ff-body mt-2" style={{ color: C.inkSoft, fontSize: 14, lineHeight: 1.5 }}>
+          This app exists for one reason: to help you break the paycheck-to-paycheck cycle,
+          one pay period at a time. You're not behind — you're building a plan, and that's the
+          whole game.
+        </div>
+
+        <div className="mt-4 space-y-3">
+          <div className="flex gap-3">
+            <Wallet size={18} color={C.primary} style={{ flexShrink: 0, marginTop: 2 }} />
+            <div className="ff-body" style={{ color: C.ink, fontSize: 14 }}>
+              <b>Budget</b> — set what you make and plan to spend each pay period. This is the only place you type in numbers.
+            </div>
+          </div>
+          <div className="flex gap-3">
+            <PlusCircle size={18} color={C.primary} style={{ flexShrink: 0, marginTop: 2 }} />
+            <div className="ff-body" style={{ color: C.ink, fontSize: 14 }}>
+              <b>Track</b> — log what actually happens as the period goes, so you always know where you stand.
+            </div>
+          </div>
+          <div className="flex gap-3">
+            <CalendarDays size={18} color={C.primary} style={{ flexShrink: 0, marginTop: 2 }} />
+            <div className="ff-body" style={{ color: C.ink, fontSize: 14 }}>
+              <b>Monthly</b> — see your plan zoomed out across the whole month, bonus paychecks included.
+            </div>
+          </div>
+          <div className="flex gap-3">
+            <TrendingUp size={18} color={C.primary} style={{ flexShrink: 0, marginTop: 2 }} />
+            <div className="ff-body" style={{ color: C.ink, fontSize: 14 }}>
+              <b>Annual</b> — watch every saved period add up into real, long-term progress.
+            </div>
+          </div>
+        </div>
+
+        <div className="ff-body mt-4" style={{ color: C.muted, fontSize: 13 }}>
+          Everything else — goals, savings rate, projections — is calculated for you. You've got this.
+        </div>
+
+        <button onClick={onClose} className="w-full mt-4 rounded-2xl py-3" style={{ background: C.primary, color: "#fff", fontWeight: 600, fontSize: 15 }}>
+          Let's go
+        </button>
+      </div>
+    </div>
+  );
+}
+
 function SettingsSheet({ state, setState, onClose, onReset, onSyncNow, syncBusy, authUser, authBusy, authMessage, onSendMagicLink, onSignOut }) {
   const [pinDraft, setPinDraft] = useState(state.settings.pin || "");
   const [emailDraft, setEmailDraft] = useState("");
@@ -682,7 +768,7 @@ function SettingsSheet({ state, setState, onClose, onReset, onSyncNow, syncBusy,
 
   return (
     <div className="fixed inset-0 flex items-end justify-center" style={{ background: "rgba(20,50,38,0.4)", zIndex: 50 }} onClick={onClose}>
-      <div className="w-full rounded-t-3xl p-5" style={{ background: C.surface, maxWidth: 480 }} onClick={(e) => e.stopPropagation()}>
+      <div className="w-full rounded-t-3xl p-5" style={{ background: C.surface, maxWidth: 480, maxHeight: "90vh", overflowY: "auto" }} onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center justify-between mb-3">
           <span className="ff-display" style={{ color: C.ink, fontSize: 18, fontWeight: 600 }}>Settings</span>
           <button onClick={onClose} style={{ color: C.muted }}><X size={20} /></button>
@@ -702,6 +788,29 @@ function SettingsSheet({ state, setState, onClose, onReset, onSyncNow, syncBusy,
         <label className="ff-body block" style={{ color: C.muted, fontSize: 12 }}>Current period started</label>
         <input type="date" value={state.periodStart || ""} onChange={(e) => setState((s) => ({ ...s, periodStart: e.target.value }))}
           className="ff-body rounded-xl px-3 py-2 mt-1 mb-4 outline-none" style={{ background: C.bg, border: `1px solid ${C.border}`, color: C.ink, fontSize: 15 }} />
+
+        <label className="ff-body block mb-2" style={{ color: C.muted, fontSize: 12 }}>Pay frequency</label>
+        <div className="flex gap-2 mb-4">
+          {[
+            { id: "biweekly", label: "Bi-weekly", paychecks: 2 },
+            { id: "weekly", label: "Weekly", paychecks: 4 },
+            { id: "job", label: "By the job", paychecks: 1 },
+          ].map((f) => {
+            const active = (state.payFrequency || "biweekly") === f.id;
+            return (
+              <button key={f.id}
+                onClick={() => setState((s) => ({ ...s, payFrequency: f.id, monthlyPaychecks: f.paychecks }))}
+                className="flex-1 ff-body rounded-xl py-2" style={{
+                  fontSize: 12, fontWeight: 600,
+                  background: active ? C.primary : C.bg,
+                  color: active ? "#fff" : C.ink,
+                  border: `1px solid ${active ? C.primary : C.border}`,
+                }}>
+                {f.label}
+              </button>
+            );
+          })}
+        </div>
 
         {/* sync */}
         <div className="rounded-2xl p-3 mb-4" style={{ background: C.bg, border: `1px solid ${C.border}` }}>
@@ -870,6 +979,24 @@ export default function App() {
     return () => clearTimeout(t);
   }, [state, loaded]);
 
+  // Flush immediately when the app is backgrounded/closed, so a change made
+  // right before switching away (e.g. picking a theme, then leaving the PWA)
+  // isn't lost to the 400ms debounce getting cut off — common on mobile.
+  const stateRef = useRef(state);
+  stateRef.current = state; // updated synchronously during render (not via useEffect) so it's
+                             // never a tick stale if the app backgrounds right after a change
+  useEffect(() => {
+    if (!loaded) return;
+    const flush = () => { saveState(stateRef.current); };
+    const onVisibility = () => { if (document.visibilityState === "hidden") flush(); };
+    document.addEventListener("visibilitychange", onVisibility);
+    window.addEventListener("pagehide", flush);
+    return () => {
+      document.removeEventListener("visibilitychange", onVisibility);
+      window.removeEventListener("pagehide", flush);
+    };
+  }, [loaded]);
+
   // track sign-in state for cloud sync (Phase 3 real auth — see CLAUDE.md and supabase/schema.sql)
   useEffect(() => {
     if (!supabaseConfigured()) return;
@@ -916,7 +1043,7 @@ export default function App() {
         income, ...c, totalExpenses, netProfit: income - totalExpenses,
       };
       const nextStart = new Date((s.periodStart || new Date().toISOString().slice(0, 10)) + "T00:00:00");
-      nextStart.setDate(nextStart.getDate() + 14);
+      nextStart.setDate(nextStart.getDate() + (s.payFrequency === "weekly" ? 7 : s.payFrequency === "job" ? 30 : 14));
       return {
         ...s, history: [...s.history, snap],
         period: { week1: {}, week2: {}, cogs: { materials: 0, labor: 0, shipping: 0 }, cogsOn: false },
@@ -969,7 +1096,7 @@ export default function App() {
   const title = { home: state.settings.name ? `Hi, ${state.settings.name}` : "Your money", budget: "Budget", track: "Track spending", monthly: "Monthly", annual: "Annual" }[screen];
 
   return (
-    <div style={{ background: C.bg, minHeight: "100vh", maxWidth: 480, margin: "0 auto", position: "relative" }}>
+    <div className="app-root" style={{ minHeight: "100vh", maxWidth: 480, margin: "0 auto", position: "relative" }}>
       <div className="flex items-center justify-between px-4 pt-4 pb-1">
         <h1 className="ff-display" style={{ color: C.ink, fontSize: 22, fontWeight: 700 }}>{title}</h1>
         <button onClick={() => setShowSettings(true)} className="rounded-full p-2" style={{ background: C.surface, border: `1px solid ${C.border}`, color: C.inkSoft }}>
@@ -977,7 +1104,7 @@ export default function App() {
         </button>
       </div>
 
-      <div style={{ paddingBottom: 92 }}>
+      <div style={{ paddingBottom: "calc(92px + env(safe-area-inset-bottom, 0px))" }}>
         {screen === "home" && <Dashboard state={state} calc={calc} setScreen={setScreen} />}
         {screen === "budget" && <BudgetScreen state={state} setState={setState} calc={calc} />}
         {screen === "track" && <TrackScreen state={state} setState={setState} calc={calc} onSavePeriod={savePeriod} />}
@@ -986,7 +1113,7 @@ export default function App() {
       </div>
 
       {toast && (
-        <div className="fixed left-0 right-0 flex justify-center" style={{ bottom: 100, zIndex: 60 }}>
+        <div className="fixed left-0 right-0 flex justify-center" style={{ bottom: "calc(100px + env(safe-area-inset-bottom, 0px))", zIndex: 60 }}>
           <div className="ff-body flex items-center gap-2 px-4 py-2 rounded-full" style={{ background: C.ink, color: "#fff", fontSize: 13 }}>
             <Check size={15} color={C.primaryBright} /> {toast}
           </div>
@@ -994,7 +1121,7 @@ export default function App() {
       )}
 
       <div className="fixed left-0 right-0 bottom-0 flex justify-center" style={{ zIndex: 40 }}>
-        <div className="flex w-full" style={{ maxWidth: 480, background: C.surface, borderTop: `1px solid ${C.border}`, paddingBottom: 6 }}>
+        <div className="flex w-full bottom-nav" style={{ maxWidth: 480 }}>
           {SCREENS.map((s) => {
             const I = s.icon, active = screen === s.id;
             return (
@@ -1012,6 +1139,10 @@ export default function App() {
           onSyncNow={syncNow} syncBusy={syncBusy}
           authUser={authUser} authBusy={authBusy} authMessage={authMessage}
           onSendMagicLink={sendMagicLink} onSignOut={handleSignOut} />
+      )}
+
+      {!state.settings.hasSeenWelcome && (
+        <WelcomeSheet name={state.settings.name} onClose={() => setState((s) => ({ ...s, settings: { ...s.settings, hasSeenWelcome: true } }))} />
       )}
     </div>
   );

@@ -183,3 +183,119 @@ describe("computeCalc — goal tracking", () => {
     expect(Number.isFinite(c.goalRatioSavingsRate)).toBe(true);
   });
 });
+
+describe("computeCalc — randomized stress test (100 runs, $45k–$100k salaries)", () => {
+  // Deterministic PRNG (mulberry32) so a failure is reproducible from the seed alone.
+  function mulberry32(seed) {
+    return function () {
+      seed |= 0; seed = (seed + 0x6D2B79F5) | 0;
+      let t = Math.imul(seed ^ (seed >>> 15), 1 | seed);
+      t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+  }
+  const rand = mulberry32(20260701);
+  const between = (min, max) => min + rand() * (max - min);
+
+  function randomScenario() {
+    const annualSalary = between(45000, 100000);
+    const incomePerPeriod = annualSalary / 26;
+    // split income across 1-3 income lines
+    const incomeLineCount = 1 + Math.floor(rand() * 3);
+    let remaining = incomePerPeriod;
+    const income = [];
+    for (let i = 0; i < incomeLineCount; i++) {
+      const amt = i === incomeLineCount - 1 ? remaining : remaining * between(0.3, 0.7);
+      income.push({ id: "inc_" + i, amount: Math.max(0, amt) });
+      remaining -= amt;
+    }
+
+    // random expenses per category, deliberately spanning under- and over-budget scenarios
+    const expenseFactor = between(0.5, 1.3); // total planned expenses as a fraction of income
+    const totalExpenseTarget = incomePerPeriod * expenseFactor;
+    const weights = GROUP_KEYS.map(() => rand());
+    const weightSum = weights.reduce((a, w) => a + w, 0);
+    const groups = {};
+    GROUP_KEYS.forEach((k, i) => {
+      const catTotal = totalExpenseTarget * (weights[i] / weightSum);
+      const lineCount = 1 + Math.floor(rand() * 3);
+      const lines = [];
+      let catRemaining = catTotal;
+      for (let j = 0; j < lineCount; j++) {
+        const amt = j === lineCount - 1 ? catRemaining : catRemaining * between(0.3, 0.7);
+        lines.push({ id: `${k}_${j}`, amount: Math.max(0, amt) });
+        catRemaining -= amt;
+      }
+      groups[k] = { lines };
+    });
+
+    // randomly log partial/no/full actuals to exercise the anyActual branch both ways
+    const loggedFraction = rand(); // 0 = nothing logged, 1 = fully logged
+    const week1 = {}, week2 = {};
+    if (loggedFraction > 0.15) {
+      [...income, ...GROUP_KEYS.flatMap((k) => groups[k].lines)].forEach((l) => {
+        if (rand() < loggedFraction) {
+          week1[l.id] = l.amount * between(0.4, 0.6);
+          week2[l.id] = l.amount * between(0.4, 0.6);
+        }
+      });
+    }
+
+    const goal = between(0, 400);
+    const savingsRateGoal = between(0, 0.4);
+    const cogsOn = rand() < 0.2;
+
+    return {
+      goal, savingsRateGoal, income, groups,
+      period: {
+        week1, week2,
+        cogs: cogsOn
+          ? { materials: between(0, 200), labor: between(0, 200), shipping: between(0, 100) }
+          : { materials: 0, labor: 0, shipping: 0 },
+        cogsOn,
+      },
+    };
+  }
+
+  const isFiniteNum = (n) => typeof n === "number" && Number.isFinite(n);
+
+  it("never produces NaN/Infinity and holds its core invariants across 100 random scenarios", () => {
+    for (let run = 0; run < 100; run++) {
+      const state = randomScenario();
+      const c = computeCalc(state);
+
+      // every numeric field computeCalc returns must be a finite number
+      for (const [key, val] of Object.entries(c)) {
+        if (typeof val === "function" || typeof val === "boolean") continue;
+        if (key === "groupBudget" || key === "groupActual") {
+          GROUP_KEYS.forEach((g) => expect(isFiniteNum(val[g]), `${key}.${g} run ${run}`).toBe(true));
+          continue;
+        }
+        expect(isFiniteNum(val), `${key} run ${run}`).toBe(true);
+      }
+
+      // core arithmetic invariants
+      const expectedExpenseBudget = GROUP_KEYS.reduce((a, k) => a + c.groupBudget[k], 0);
+      expect(c.expenseBudget).toBeCloseTo(expectedExpenseBudget, 6);
+      expect(c.leftOverBudget).toBeCloseTo(c.incomeBudget - c.expenseBudget, 6);
+      expect(c.netProfit).toBeCloseTo(c.grossProfit - (c.anyActual ? c.spentSoFar : c.expenseBudget), 6);
+      expect(c.grossProfit).toBeCloseTo((c.anyActual ? c.incomeActual : c.incomeBudget) - c.cogs, 6);
+
+      // goal ratios: 0 (never NaN/Infinity) whenever the corresponding goal is 0
+      if (state.goal <= 0) {
+        expect(c.goalRatioSavings).toBe(0);
+        expect(c.goalRatioNetProfit).toBe(0);
+        expect(c.goalOnTrackSavings).toBe(false);
+        expect(c.goalOnTrackNetProfit).toBe(false);
+      }
+      if (state.savingsRateGoal <= 0) {
+        expect(c.goalRatioSavingsRate).toBe(0);
+        expect(c.goalOnTrackSavingsRate).toBe(false);
+      }
+
+      // ratio (spend pace) is never negative, and 0 when there's no budget to spend against
+      expect(c.ratio).toBeGreaterThanOrEqual(0);
+      if (c.expenseBudget === 0) expect(c.ratio).toBe(0);
+    }
+  });
+});
