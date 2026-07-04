@@ -10,6 +10,7 @@ import {
 
 import { C, GROUP_KEYS, GROUP_META, THEMES } from "./lib/theme.js";
 import { ThemeMascotPanel, ChartCat } from "./components/ThemeMascot.jsx";
+import { TourOverlay } from "./components/Tour.jsx";
 import { DEFAULT_STATE } from "./lib/defaults.js";
 import { num, fmt, fmtSigned, pct, fmtDate, cyclePosition } from "./lib/format.js";
 import { useCalc } from "./lib/calc.js";
@@ -18,9 +19,9 @@ import { loadState, saveState, pullCloud } from "./lib/storage.js";
 import { supabaseConfigured, signInWithEmail, signOut, getUser, onAuthChange } from "./lib/supabase.js";
 
 /* ============================== UI atoms ============================== */
-function Card({ children, style, className = "" }) {
+function Card({ children, style, className = "", ...rest }) {
   return (
-    <div className={"rounded-3xl " + className}
+    <div {...rest} className={"rounded-3xl " + className}
       style={{ background: C.surface, border: `1px solid ${C.border}`, boxShadow: "var(--card-shadow)", ...style }}>
       {children}
     </div>
@@ -146,7 +147,7 @@ function GoalCard({ state, calc }) {
   const anyOnTrack = data.some((d) => d.onTrack);
 
   return (
-    <Card className="p-4 mt-3">
+    <Card data-tour="goalcard" className="p-4 mt-3">
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2">
           <Target size={18} color={C.primary} />
@@ -202,7 +203,7 @@ function Dashboard({ state, calc, setScreen }) {
 
   return (
     <div className="px-4 pb-2">
-      <Card className="p-5 mt-3" style={{ background: "linear-gradient(135deg,#163d2c 0%,#0f5138 55%,#18895A 130%)", border: "none" }}>
+      <Card data-tour="hero" className="p-5 mt-3" style={{ background: "linear-gradient(135deg,#163d2c 0%,#0f5138 55%,#18895A 130%)", border: "none" }}>
         <div className="flex items-center justify-between">
           <span className="ff-body" style={{ color: "rgba(255,255,255,0.72)", fontSize: 12, letterSpacing: 0.4 }}>MONEY LEFT OVER · THIS PERIOD</span>
           <span className="ff-body px-2 py-1 rounded-full" style={{ fontSize: 11, color: "#fff", background: "rgba(255,255,255,0.16)" }}>{status}</span>
@@ -232,14 +233,14 @@ function Dashboard({ state, calc, setScreen }) {
         </Card>
       )}
 
-      <div className="flex gap-3 mt-3">
+      <div data-tour="stats" className="flex gap-3 mt-3">
         <StatTile label="Income" value={fmt(calc.incomeBudget)} sub="per period" />
         <StatTile label="Expenses" value={fmt(calc.expenseBudget)} sub="incl. savings" />
         <StatTile label="Savings rate" value={pct(calc.savingsRateBudget)} sub="of income"
           color={calc.savingsRateBudget >= num(state.savingsRateGoal) ? C.primary : C.coral} />
       </div>
 
-      <div className="flex gap-3 mt-3">
+      <div data-tour="quickactions" className="flex gap-3 mt-3">
         <button onClick={() => setScreen("track")} className="flex-1 flex items-center justify-center gap-2 rounded-2xl py-3" style={{ background: C.primary, color: "#fff" }}>
           <PlusCircle size={18} /> <span className="ff-body" style={{ fontWeight: 600, fontSize: 14 }}>Log spending</span>
         </button>
@@ -249,7 +250,7 @@ function Dashboard({ state, calc, setScreen }) {
       </div>
 
       <SectionTitle>Where it goes</SectionTitle>
-      <Card className="p-4">
+      <Card data-tour="donut" className="p-4">
         <div style={{ height: 200, position: "relative" }}>
           <ResponsiveContainer width="100%" height="100%">
             <PieChart>
@@ -293,7 +294,7 @@ function BudgetScreen({ state, setState, calc }) {
       </div>
 
       <SectionTitle right={<button onClick={addIncome} style={{ color: C.primary }}><Plus size={18} /></button>}>Income</SectionTitle>
-      <Card className="px-4 py-2">
+      <Card data-tour="income-section" className="px-4 py-2">
         {state.income.map((l) => (
           <LineRow key={l.id} name={l.name} amount={l.amount}
             onName={(v) => setIncome(l.id, { name: v })} onAmount={(v) => setIncome(l.id, { amount: v })} onDelete={() => delIncome(l.id)} />
@@ -312,7 +313,7 @@ function BudgetScreen({ state, setState, calc }) {
               {GROUP_META[g].label}
             </span>
           </SectionTitle>
-          <Card className="px-4 py-2">
+          <Card data-tour={g === GROUP_KEYS[0] ? "category-section" : undefined} className="px-4 py-2">
             {state.groups[g].lines.map((l) => (
               <LineRow key={l.id} name={l.name} amount={l.amount}
                 onName={(v) => setLine(g, l.id, { name: v })} onAmount={(v) => setLine(g, l.id, { amount: v })} onDelete={() => delLine(g, l.id)} />
@@ -365,7 +366,7 @@ function TrackScreen({ state, setState, calc, onSavePeriod }) {
       )}
 
       <SectionTitle>{showWeeks ? `Income — ${week === "week1" ? "Week 1" : "Week 2"}` : "Income"}</SectionTitle>
-      <Card className="px-4 py-2">
+      <Card data-tour="track-income" className="px-4 py-2">
         {state.income.map((l) => (
           <TrackRow key={l.id} name={l.name} value={state.period[week][l.id]} onChange={(v) => setActual(l.id, v)} total={calc.lineActual(l.id)} budget={l.amount} />
         ))}
@@ -409,7 +410,7 @@ function TrackScreen({ state, setState, calc, onSavePeriod }) {
       )}
 
       <SectionTitle>This period</SectionTitle>
-      <Card className="p-4">
+      <Card data-tour="track-summary" className="p-4">
         <div style={{ height: 180 }}>
           <ResponsiveContainer width="100%" height="100%">
             <BarChart data={barData} margin={{ top: 6, right: 6, left: -16, bottom: 0 }}>
@@ -426,7 +427,7 @@ function TrackScreen({ state, setState, calc, onSavePeriod }) {
       </Card>
 
       <GoalCard state={state} calc={calc} />
-      <button onClick={onSavePeriod} className="w-full mt-4 flex items-center justify-center gap-2 rounded-2xl py-3.5" style={{ background: C.primary, color: "#fff" }}>
+      <button data-tour="save-period" onClick={onSavePeriod} className="w-full mt-4 flex items-center justify-center gap-2 rounded-2xl py-3.5" style={{ background: C.primary, color: "#fff" }}>
         <ArrowDownToLine size={18} /> <span className="ff-body" style={{ fontWeight: 600, fontSize: 15 }}>Save this period to history</span>
       </button>
       <div className="ff-body text-center mt-2 mb-1" style={{ color: C.muted, fontSize: 12 }}>
@@ -451,7 +452,7 @@ function MonthlyScreen({ state, setState, calc }) {
   return (
     <div className="px-4 pb-2">
       {paycheckOptions.length > 1 && (
-        <div className="flex gap-1 p-1 rounded-2xl mt-3" style={{ background: C.surface, border: `1px solid ${C.border}` }}>
+        <div data-tour="paycheck-toggle" className="flex gap-1 p-1 rounded-2xl mt-3" style={{ background: C.surface, border: `1px solid ${C.border}` }}>
           {paycheckOptions.map((n) => (
             <button key={n} onClick={() => setState((s) => ({ ...s, monthlyPaychecks: n }))} className="flex-1 rounded-xl py-2 ff-body"
               style={{ background: m === n ? C.primary : "transparent", color: m === n ? "#fff" : C.muted, fontWeight: 600, fontSize: 13 }}>
@@ -462,7 +463,7 @@ function MonthlyScreen({ state, setState, calc }) {
       )}
 
       <SectionTitle>Budget vs actual</SectionTitle>
-      <Card className="px-4 py-3">
+      <Card data-tour="budget-vs-actual" className="px-4 py-3">
         <div className="flex ff-body pb-2" style={{ color: C.muted, fontSize: 11, textTransform: "uppercase", letterSpacing: 0.3 }}>
           <span className="flex-1">Category</span>
           <span style={{ width: 76, textAlign: "right" }}>Budget</span>
@@ -587,7 +588,7 @@ function AnnualScreen({ state, calc, setState }) {
             ? "Based on this period × 12 months — save a few periods for a steadier average."
             : `Based on this period × ${periodsPerYear} pay periods.`}
       </div>
-      <Card className="p-4">
+      <Card data-tour="annual-chart" className="p-4">
         <div style={{ height: 190 }}>
           <ResponsiveContainer width="100%" height="100%">
             <BarChart data={proj} margin={{ top: 6, right: 6, left: -8, bottom: 0 }}>
@@ -601,7 +602,7 @@ function AnnualScreen({ state, calc, setState }) {
       </Card>
 
       <SectionTitle>Milestones</SectionTitle>
-      <div className="grid grid-cols-2 gap-3">
+      <div data-tour="milestones" className="grid grid-cols-2 gap-3">
         {milestones.map((mi, i) => (
           <Card key={i} className="p-3">
             <div className="ff-body" style={{ color: C.muted, fontSize: 11, textTransform: "uppercase", letterSpacing: 0.3 }}>{mi.label}</div>
@@ -610,7 +611,9 @@ function AnnualScreen({ state, calc, setState }) {
         ))}
       </div>
 
-      <SectionTitle right={<button onClick={() => setAdding((a) => !a)} style={{ color: C.primary }}><Plus size={18} /></button>}>Pay period history</SectionTitle>
+      <div data-tour="history">
+        <SectionTitle right={<button onClick={() => setAdding((a) => !a)} style={{ color: C.primary }}><Plus size={18} /></button>}>Pay period history</SectionTitle>
+      </div>
 
       {adding && (
         <Card className="p-4 mb-3">
@@ -744,7 +747,7 @@ function exportHistoryCsv(state) {
   downloadFile(`biweekly-budget-history-${stamp}.csv`, csv, "text/csv");
 }
 
-function WelcomeSheet({ name, onClose }) {
+function WelcomeSheet({ name, onClose, onStartTour }) {
   return (
     <div className="fixed inset-0 flex items-end justify-center" style={{ background: "rgba(20,50,38,0.4)", zIndex: 70 }} onClick={onClose}>
       <div className="w-full rounded-t-3xl p-5" style={{ background: C.surface, maxWidth: 480, maxHeight: "90vh", overflowY: "auto" }} onClick={(e) => e.stopPropagation()}>
@@ -791,15 +794,20 @@ function WelcomeSheet({ name, onClose }) {
           Everything else — goals, savings rate, projections — is calculated for you. You've got this.
         </div>
 
-        <button onClick={onClose} className="w-full mt-4 rounded-2xl py-3" style={{ background: C.primary, color: "#fff", fontWeight: 600, fontSize: 15 }}>
-          Let's go
-        </button>
+        <div className="flex gap-2 mt-4">
+          <button onClick={onClose} className="flex-1 rounded-2xl py-3" style={{ background: C.bg, color: C.ink, border: `1px solid ${C.border}` }}>
+            <span className="ff-body" style={{ fontWeight: 600, fontSize: 15 }}>Let's go</span>
+          </button>
+          <button onClick={onStartTour} className="flex-1 rounded-2xl py-3" style={{ background: C.primary, color: "#fff" }}>
+            <span className="ff-body" style={{ fontWeight: 600, fontSize: 15 }}>Show me around</span>
+          </button>
+        </div>
       </div>
     </div>
   );
 }
 
-function SettingsSheet({ state, setState, onClose, onReset, onSyncNow, syncBusy, authUser, authBusy, authMessage, onSendMagicLink, onSignOut }) {
+function SettingsSheet({ state, setState, onClose, onReset, onSyncNow, syncBusy, authUser, authBusy, authMessage, onSendMagicLink, onSignOut, onStartTour }) {
   const [pinDraft, setPinDraft] = useState(state.settings.pin || "");
   const [emailDraft, setEmailDraft] = useState("");
   const cloudOn = supabaseConfigured();
@@ -839,11 +847,13 @@ function SettingsSheet({ state, setState, onClose, onReset, onSyncNow, syncBusy,
           onChange={(e) => setState((s) => ({ ...s, settings: { ...s.settings, name: e.target.value } }))}
           className="ff-body w-full rounded-xl px-3 py-2 mt-1 mb-4 outline-none" style={{ background: C.bg, border: `1px solid ${C.border}`, color: C.ink, fontSize: 15 }} />
 
-        <label className="ff-body block" style={{ color: C.muted, fontSize: 12 }}>Bi-weekly savings goal</label>
-        <div className="mt-1 mb-4"><NumInput value={state.goal} onChange={(v) => setState((s) => ({ ...s, goal: v }))} align="left" /></div>
+        <div data-tour="goal-fields">
+          <label className="ff-body block" style={{ color: C.muted, fontSize: 12 }}>Bi-weekly savings goal</label>
+          <div className="mt-1 mb-4"><NumInput value={state.goal} onChange={(v) => setState((s) => ({ ...s, goal: v }))} align="left" /></div>
 
-        <label className="ff-body block" style={{ color: C.muted, fontSize: 12 }}>Savings rate goal</label>
-        <div className="mt-1 mb-4"><PercentInput value={state.savingsRateGoal} onChange={(v) => setState((s) => ({ ...s, savingsRateGoal: v }))} /></div>
+          <label className="ff-body block" style={{ color: C.muted, fontSize: 12 }}>Savings rate goal</label>
+          <div className="mt-1 mb-4"><PercentInput value={state.savingsRateGoal} onChange={(v) => setState((s) => ({ ...s, savingsRateGoal: v }))} /></div>
+        </div>
 
         <label className="ff-body block" style={{ color: C.muted, fontSize: 12 }}>Current period started</label>
         <input type="date" value={state.periodStart || ""} onChange={(e) => setState((s) => ({ ...s, periodStart: e.target.value }))}
@@ -873,7 +883,7 @@ function SettingsSheet({ state, setState, onClose, onReset, onSyncNow, syncBusy,
         </div>
 
         {/* sync */}
-        <div className="rounded-2xl p-3 mb-4" style={{ background: C.bg, border: `1px solid ${C.border}` }}>
+        <div data-tour="sync-section" className="rounded-2xl p-3 mb-4" style={{ background: C.bg, border: `1px solid ${C.border}` }}>
           <div className="flex items-center gap-2 mb-1">
             {cloudOn ? <RefreshCw size={15} color={C.primary} /> : <CloudOff size={15} color={C.muted} />}
             <span className="ff-body" style={{ color: C.ink, fontSize: 14, fontWeight: 600 }}>Cloud sync</span>
@@ -921,7 +931,7 @@ function SettingsSheet({ state, setState, onClose, onReset, onSyncNow, syncBusy,
         </div>
 
         {/* backup */}
-        <div className="rounded-2xl p-3 mb-4" style={{ background: C.bg, border: `1px solid ${C.border}` }}>
+        <div data-tour="backup-section" className="rounded-2xl p-3 mb-4" style={{ background: C.bg, border: `1px solid ${C.border}` }}>
           <div className="flex items-center gap-2 mb-2">
             <Download size={15} color={C.primary} />
             <span className="ff-body" style={{ color: C.ink, fontSize: 14, fontWeight: 600 }}>Backup</span>
@@ -952,7 +962,7 @@ function SettingsSheet({ state, setState, onClose, onReset, onSyncNow, syncBusy,
             onChange={(e) => setState((s) => ({ ...s, settings: { ...s.settings, darkMode: e.target.checked } }))} />
         </div>
 
-        <div className="py-2 mb-2">
+        <div data-tour="theme-picker" className="py-2 mb-2">
           <span className="ff-body block mb-2" style={{ color: C.ink, fontSize: 15 }}>Theme</span>
           <div className="flex flex-wrap gap-2">
             {THEMES.map((t) => {
@@ -994,6 +1004,10 @@ function SettingsSheet({ state, setState, onClose, onReset, onSyncNow, syncBusy,
           </div>
         )}
 
+        <button onClick={onStartTour} className="w-full flex items-center justify-center gap-2 rounded-2xl py-3 mt-2" style={{ background: C.bg, color: C.ink, border: `1px solid ${C.border}` }}>
+          <Target size={16} /> <span className="ff-body" style={{ fontWeight: 600, fontSize: 14 }}>Take a tour</span>
+        </button>
+
         <button onClick={onReset} className="w-full flex items-center justify-center gap-2 rounded-2xl py-3 mt-2" style={{ background: C.surfaceDanger, color: C.coral }}>
           <RotateCcw size={16} /> <span className="ff-body" style={{ fontWeight: 600, fontSize: 14 }}>Reset all data</span>
         </button>
@@ -1016,6 +1030,7 @@ export default function App() {
   const [loaded, setLoaded] = useState(false);
   const [screen, setScreen] = useState("home");
   const [showSettings, setShowSettings] = useState(false);
+  const [touring, setTouring] = useState(false);
   const [unlocked, setUnlocked] = useState(false);
   const [toast, setToast] = useState("");
   const [syncBusy, setSyncBusy] = useState(false);
@@ -1159,7 +1174,7 @@ export default function App() {
     <div className="app-root" style={{ minHeight: "100vh", maxWidth: 480, margin: "0 auto", position: "relative" }}>
       <div className="flex items-center justify-between px-4 pt-4 pb-1">
         <h1 className="ff-display" style={{ color: C.ink, fontSize: 22, fontWeight: 700 }}>{title}</h1>
-        <button onClick={() => setShowSettings(true)} className="rounded-full p-2" style={{ background: C.surface, border: `1px solid ${C.border}`, color: C.inkSoft }}>
+        <button data-tour="settings-gear" onClick={() => setShowSettings(true)} className="rounded-full p-2" style={{ background: C.surface, border: `1px solid ${C.border}`, color: C.inkSoft }}>
           <Settings size={18} />
         </button>
       </div>
@@ -1198,11 +1213,22 @@ export default function App() {
         <SettingsSheet state={state} setState={setState} onClose={() => setShowSettings(false)} onReset={reset}
           onSyncNow={syncNow} syncBusy={syncBusy}
           authUser={authUser} authBusy={authBusy} authMessage={authMessage}
-          onSendMagicLink={sendMagicLink} onSignOut={handleSignOut} />
+          onSendMagicLink={sendMagicLink} onSignOut={handleSignOut}
+          onStartTour={() => { setShowSettings(false); setTouring(true); }} />
       )}
 
       {!state.settings.hasSeenWelcome && (
-        <WelcomeSheet name={state.settings.name} onClose={() => setState((s) => ({ ...s, settings: { ...s.settings, hasSeenWelcome: true } }))} />
+        <WelcomeSheet name={state.settings.name}
+          onClose={() => setState((s) => ({ ...s, settings: { ...s.settings, hasSeenWelcome: true } }))}
+          onStartTour={() => {
+            setState((s) => ({ ...s, settings: { ...s.settings, hasSeenWelcome: true } }));
+            setTouring(true);
+          }} />
+      )}
+
+      {touring && (
+        <TourOverlay screen={screen} setScreen={setScreen} showSettings={showSettings} setShowSettings={setShowSettings}
+          onFinish={() => setTouring(false)} />
       )}
     </div>
   );
