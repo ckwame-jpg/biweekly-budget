@@ -554,6 +554,29 @@ function AnnualScreen({ state, calc, setState }) {
   const setPayDate = (id, iso) => setState((s) => ({ ...s, history: s.history.map((h) => h.id === id ? { ...h, payDate: iso } : h) }));
   const deletePeriod = (id) => setState((s) => ({ ...s, history: s.history.filter((h) => h.id !== id) }));
 
+  // manually add a past period — e.g. one from before you started using the
+  // app, or one you forgot to save at the time
+  const emptyDraft = () => ({ payDate: new Date().toISOString().slice(0, 10), income: 0,
+    housing: 0, food: 0, transport: 0, debt: 0, savings: 0, personal: 0 });
+  const [adding, setAdding] = useState(false);
+  const [draft, setDraft] = useState(emptyDraft);
+  const draftExpenses = GROUP_KEYS.reduce((a, k) => a + num(draft[k]), 0);
+  const draftNet = num(draft.income) - draftExpenses;
+  const addPeriod = () => {
+    setState((s) => {
+      const n = (s.history.length ? Math.max(...s.history.map((h) => h.periodNumber)) : 0) + 1;
+      const c = {};
+      GROUP_KEYS.forEach((k) => { c[k] = num(draft[k]); });
+      const snap = {
+        id: "p_" + Date.now(), periodNumber: n, payDate: draft.payDate,
+        income: num(draft.income), ...c, totalExpenses: draftExpenses, netProfit: draftNet,
+      };
+      return { ...s, history: [...s.history, snap] };
+    });
+    setDraft(emptyDraft());
+    setAdding(false);
+  };
+
   return (
     <div className="px-4 pb-2">
       <SectionTitle>Annual projection</SectionTitle>
@@ -587,7 +610,44 @@ function AnnualScreen({ state, calc, setState }) {
         ))}
       </div>
 
-      <SectionTitle>Pay period history</SectionTitle>
+      <SectionTitle right={<button onClick={() => setAdding((a) => !a)} style={{ color: C.primary }}><Plus size={18} /></button>}>Pay period history</SectionTitle>
+
+      {adding && (
+        <Card className="p-4 mb-3">
+          <div className="ff-body mb-2" style={{ color: C.muted, fontSize: 12 }}>
+            Add a past period — e.g. one from before you started using the app.
+          </div>
+          <label className="ff-body block" style={{ color: C.muted, fontSize: 11 }}>Pay date</label>
+          <input type="date" value={draft.payDate} onChange={(e) => setDraft((d) => ({ ...d, payDate: e.target.value }))}
+            className="ff-body rounded-xl px-3 py-2 mt-1 mb-3 outline-none" style={{ background: C.bg, border: `1px solid ${C.border}`, color: C.ink, fontSize: 14 }} />
+
+          <div className="flex items-center justify-between py-1">
+            <span className="ff-body" style={{ color: C.ink, fontSize: 14 }}>Income</span>
+            <NumInput value={draft.income} onChange={(v) => setDraft((d) => ({ ...d, income: v }))} />
+          </div>
+          {GROUP_KEYS.map((k) => (
+            <div key={k} className="flex items-center justify-between py-1">
+              <span className="ff-body" style={{ color: C.ink, fontSize: 14 }}>{GROUP_META[k].label}</span>
+              <NumInput value={draft[k]} onChange={(v) => setDraft((d) => ({ ...d, [k]: v }))} />
+            </div>
+          ))}
+
+          <div className="flex items-center justify-between py-2 mt-1" style={{ borderTop: `1px solid ${C.border}` }}>
+            <span className="ff-body" style={{ color: C.muted, fontSize: 13 }}>Net profit</span>
+            <span className="ff-num" style={{ color: draftNet >= 0 ? C.primary : C.coral, fontWeight: 600, fontSize: 15 }}>{fmtSigned(draftNet)}</span>
+          </div>
+
+          <div className="flex gap-2 mt-3">
+            <button onClick={() => { setAdding(false); setDraft(emptyDraft()); }} className="flex-1 rounded-xl py-2.5" style={{ background: C.bg, color: C.ink, border: `1px solid ${C.border}` }}>
+              <span className="ff-body" style={{ fontWeight: 600, fontSize: 14 }}>Cancel</span>
+            </button>
+            <button onClick={addPeriod} className="flex-1 rounded-xl py-2.5" style={{ background: C.primary, color: "#fff" }}>
+              <span className="ff-body" style={{ fontWeight: 600, fontSize: 14 }}>Add period</span>
+            </button>
+          </div>
+        </Card>
+      )}
+
       {hist.length === 0 ? (
         <Card className="p-5 text-center">
           <CalendarDays size={28} color={C.muted} style={{ margin: "0 auto 8px" }} />
