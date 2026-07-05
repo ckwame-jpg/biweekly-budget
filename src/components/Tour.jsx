@@ -7,11 +7,12 @@ import { useState, useEffect } from "react";
 import { C } from "../lib/theme.js";
 
 export const TOUR_STEPS = [
+  { screen: "home", target: "save-button", title: "Save anytime", text: "Your work saves automatically, but tap Save to store it right away. Sign in below and it's tied to your email — sign in on any device to get it back." },
   { screen: "home", target: "settings-gear", title: "Settings", text: "Tap the gear anytime for goals, themes, backups, and sync." },
   { screen: "home", target: "goal-fields", title: "Your goals", text: "Set a dollar savings goal and a savings-rate goal — both get tracked automatically.", openSettings: true },
   { screen: "home", target: "theme-picker", title: "Make it yours", text: "Pick light or dark, or a fully themed skin — each with its own colors, fonts, and a little reactive mascot.", openSettings: true },
   { screen: "home", target: "backup-section", title: "Backups", text: "Export a full backup anytime, or import one back in.", openSettings: true },
-  { screen: "home", target: "sync-section", title: "Cloud sync", text: "Sign in with email to keep one budget in sync across every device you own.", openSettings: true },
+  { screen: "home", target: "sync-section", title: "Cloud sync", text: "Sign in with email to keep one budget in sync across every device — it saves to your account and comes back when you sign in.", openSettings: true },
   { screen: "home", target: "hero", title: "Money Left Over", text: "What's left after every bill and your savings goal — the number that matters most, front and center." },
   { screen: "home", target: "stats", title: "Quick stats", text: "Your income, total expenses, and savings rate for this period, at a glance." },
   { screen: "home", target: "quickactions", title: "Jump right in", text: "Log spending or edit your budget with one tap, right from Home." },

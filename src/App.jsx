@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback, useRef, lazy, Suspense } from 
 import {
   Home, Wallet, PlusCircle, CalendarDays, TrendingUp, Settings, X, Check,
   Plus, Trash2, Pencil, Target, Sparkles, RotateCcw, Lock, Unlock, Delete, ArrowDownToLine, RefreshCw, CloudOff,
-  Download, Upload,
+  Download, Upload, Save,
 } from "lucide-react";
 
 import { C, GROUP_KEYS, GROUP_META, THEMES } from "./lib/theme.js";
@@ -12,7 +12,7 @@ import { DEFAULT_STATE } from "./lib/defaults.js";
 import { num, fmt, fmtSigned, pct, fmtDate, cyclePosition } from "./lib/format.js";
 import { useCalc } from "./lib/calc.js";
 import { useReducedMotion, useCountUp } from "./lib/hooks.js";
-import { loadState, saveState, pullCloud } from "./lib/storage.js";
+import { loadState, saveState, pullCloud, clearLocal } from "./lib/storage.js";
 import { supabaseConfigured, signInWithEmail, signOut, getUser, onAuthChange } from "./lib/supabase.js";
 
 // recharts is one of the two heaviest deps in the app (see CLAUDE.md backlog);
@@ -1198,6 +1198,7 @@ export default function App() {
   const [unlocked, setUnlocked] = useState(false);
   const [toast, setToast] = useState("");
   const [syncBusy, setSyncBusy] = useState(false);
+  const [saveBusy, setSaveBusy] = useState(false);
   const [authUser, setAuthUser] = useState(null);
   const [authBusy, setAuthBusy] = useState(false);
   const [authMessage, setAuthMessage] = useState("");
@@ -1240,7 +1241,23 @@ export default function App() {
   useEffect(() => {
     if (!supabaseConfigured()) return;
     getUser().then(setAuthUser);
-    return onAuthChange(setAuthUser);
+    return onAuthChange(async (user, event) => {
+      setAuthUser(user);
+      // On a genuine sign-in (e.g. the magic-link landing), the account is the
+      // source of truth: pull this email's saved budget and load it, so signing
+      // in on any device brings your data back. If the account has no row yet,
+      // seed it with whatever's on this device.
+      if (user && event === "SIGNED_IN") {
+        const cloud = await pullCloud();
+        if (cloud) {
+          setState((s) => ({ ...DEFAULT_STATE, ...cloud, settings: { ...DEFAULT_STATE.settings, ...(cloud.settings || {}) } }));
+          showToast("Your budget is synced to this account");
+        } else {
+          await saveState(stateRef.current);
+          showToast("This device is now saved to your account");
+        }
+      }
+    });
   }, []);
 
   // "classic" theme follows the dark mode toggle; the fun themes are self-contained
@@ -1297,6 +1314,15 @@ export default function App() {
     setScreen("annual");
   }, []);
 
+  // Explicit save: persist locally and, when signed in, push to this account's
+  // cloud row immediately (rather than waiting on the debounced auto-save).
+  const saveNow = useCallback(async () => {
+    setSaveBusy(true);
+    await saveState(stateRef.current);
+    setSaveBusy(false);
+    showToast(supabaseConfigured() && authUser ? "Saved to your account" : "Saved on this device");
+  }, [authUser]);
+
   const syncNow = useCallback(async () => {
     setSyncBusy(true);
     const cloud = await pullCloud();
@@ -1319,9 +1345,12 @@ export default function App() {
   }, []);
 
   const handleSignOut = useCallback(async () => {
+    // flush the latest to this account's cloud while still signed in, then wipe
+    // the device so the next account to sign in restores its own data cleanly
+    await saveState(stateRef.current);
     await signOut();
-    setAuthUser(null);
-    showToast("Signed out");
+    clearLocal();
+    window.location.reload();
   }, []);
 
   const reset = () => { setState(DEFAULT_STATE); setShowSettings(false); showToast("All data reset"); };
@@ -1342,9 +1371,15 @@ export default function App() {
     <div className="app-root" style={{ minHeight: "100vh", maxWidth: 480, margin: "0 auto", position: "relative" }}>
       <div className="flex items-center justify-between px-4 pt-4 pb-1">
         <h1 className="ff-display" style={{ color: C.ink, fontSize: 22, fontWeight: 700 }}>{title}</h1>
-        <button data-tour="settings-gear" onClick={() => setShowSettings(true)} className="rounded-full p-2" style={{ background: C.surface, border: `1px solid ${C.border}`, color: C.inkSoft }}>
-          <Settings size={18} />
-        </button>
+        <div className="flex items-center gap-2">
+          <button data-tour="save-button" onClick={saveNow} disabled={saveBusy}
+            className="flex items-center gap-1.5 rounded-full pl-2.5 pr-3 py-2" style={{ background: C.primary, color: "#fff", opacity: saveBusy ? 0.6 : 1 }}>
+            <Save size={15} /> <span className="ff-body" style={{ fontWeight: 600, fontSize: 13 }}>{saveBusy ? "Saving…" : "Save"}</span>
+          </button>
+          <button data-tour="settings-gear" onClick={() => setShowSettings(true)} className="rounded-full p-2" style={{ background: C.surface, border: `1px solid ${C.border}`, color: C.inkSoft }}>
+            <Settings size={18} />
+          </button>
+        </div>
       </div>
 
       <div style={{ paddingBottom: "calc(92px + env(safe-area-inset-bottom, 0px))" }}>

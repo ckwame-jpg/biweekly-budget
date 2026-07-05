@@ -62,6 +62,15 @@ export async function pullCloud() {
   return readCloud();
 }
 
+/**
+ * Wipe this device's local copy. Used on sign-out so the next account to sign in
+ * on this device starts clean and restores its own data from the cloud, instead
+ * of inheriting the previous user's numbers via last-write-wins.
+ */
+export function clearLocal() {
+  try { localStorage.removeItem(LS_KEY); } catch { /* ignore */ }
+}
+
 /** Persist to local always, and to the cloud once signed in. */
 export async function saveState(state) {
   const stamped = { ...state, _updatedAt: Date.now() };

@@ -40,10 +40,13 @@ test("touch interactions work across the app on a touch-enabled mobile viewport"
   await firstAmountInput.fill("777");
   await expect(firstAmountInput).toHaveValue("777");
 
+  // tap the header Save button (auto-save also runs, but this is the explicit one)
+  await page.getByRole("button", { name: "Save", exact: true }).tap();
+
   // tap the settings gear to open, then tap its close (X) button — found via its
   // sibling relationship to the "Settings" label, since the sheet's content is
   // taller than the viewport (no backdrop area is actually reachable to tap instead)
-  await page.locator('button:has(svg)').first().tap(); // gear is the first icon-only button in the header
+  await page.locator('[data-tour="settings-gear"]').tap(); // gear, targeted by its stable tour anchor
   await expect(page.getByText("Settings", { exact: true })).toBeVisible();
   await page.getByText("Settings", { exact: true }).locator("xpath=following-sibling::button").tap();
   await expect(page.getByText("Settings", { exact: true })).toBeHidden();

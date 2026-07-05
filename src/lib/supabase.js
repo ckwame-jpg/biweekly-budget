@@ -52,7 +52,8 @@ export function onAuthChange(callback) {
   let unsubscribe = () => {};
   getSupabase().then((sb) => {
     if (!sb || unsubscribed) return;
-    const { data } = sb.auth.onAuthStateChange((_event, session) => callback(session?.user || null));
+    // event is "SIGNED_IN" | "SIGNED_OUT" | "INITIAL_SESSION" | "TOKEN_REFRESHED" | ...
+    const { data } = sb.auth.onAuthStateChange((event, session) => callback(session?.user || null, event));
     unsubscribe = () => data.subscription.unsubscribe();
   });
   return () => { unsubscribed = true; unsubscribe(); };
