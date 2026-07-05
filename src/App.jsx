@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, useCallback, useRef, lazy, Suspense } from "react";
+import React, { useState, useEffect, useCallback, useRef, lazy, Suspense } from "react";
 import {
   Home, Wallet, PlusCircle, CalendarDays, TrendingUp, Settings, X, Check,
   Plus, Trash2, Target, Sparkles, RotateCcw, Lock, Delete, ArrowDownToLine, RefreshCw, CloudOff,
@@ -480,7 +480,7 @@ function TrackScreen({ state, setState, calc, onSavePeriod }) {
         </div>
         {state.period.cogsOn && <Row k="Gross profit (income − COGS)" v={fmt(calc.grossProfit)} />}
         <Row k="Net profit (income − expenses)" v={fmt(calc.netProfit)} color={calc.netProfit >= 0 ? C.primary : C.coral} />
-        <Row k="Savings rate" v={pct(calc.incomeBudget ? calc.savedThisPeriod / (calc.anyActual ? calc.incomeActual : calc.incomeBudget) : 0)} />
+        <Row k="Savings rate" v={pct(calc.savingsRateThisPeriod)} />
       </Card>
 
       <GoalCard state={state} calc={calc} />
