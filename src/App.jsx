@@ -1,12 +1,9 @@
-import React, { useState, useEffect, useMemo, useCallback, useRef } from "react";
+import React, { useState, useEffect, useMemo, useCallback, useRef, lazy, Suspense } from "react";
 import {
   Home, Wallet, PlusCircle, CalendarDays, TrendingUp, Settings, X, Check,
   Plus, Trash2, Target, Sparkles, RotateCcw, Lock, Delete, ArrowDownToLine, RefreshCw, CloudOff,
   Download, Upload,
 } from "lucide-react";
-import {
-  PieChart, Pie, Cell, BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, ReferenceLine,
-} from "recharts";
 
 import { C, GROUP_KEYS, GROUP_META, THEMES } from "./lib/theme.js";
 import { ThemeMascotPanel, ChartCat } from "./components/ThemeMascot.jsx";
@@ -17,6 +14,15 @@ import { useCalc } from "./lib/calc.js";
 import { useReducedMotion, useCountUp } from "./lib/hooks.js";
 import { loadState, saveState, pullCloud } from "./lib/storage.js";
 import { supabaseConfigured, signInWithEmail, signOut, getUser, onAuthChange } from "./lib/supabase.js";
+
+// recharts is one of the two heaviest deps in the app (see CLAUDE.md backlog);
+// split into its own chunk and only fetched once a chart actually renders.
+const GoalBarChart = lazy(() => import("./components/Charts.jsx").then((m) => ({ default: m.GoalBarChart })));
+const SpendDonutChart = lazy(() => import("./components/Charts.jsx").then((m) => ({ default: m.SpendDonutChart })));
+const CategoryBarChart = lazy(() => import("./components/Charts.jsx").then((m) => ({ default: m.CategoryBarChart })));
+function ChartSkeleton() {
+  return <div className="w-full h-full rounded-xl" style={{ background: C.bg }} />;
+}
 
 /* ============================== UI atoms ============================== */
 function Card({ children, style, className = "", ...rest }) {
@@ -161,17 +167,9 @@ function GoalCard({ state, calc }) {
         Progress toward your {fmt(goal)} savings goal and {pct(rateGoal)} savings-rate goal this period.
       </div>
       <div className="mt-2" style={{ height: 140 }}>
-        <ResponsiveContainer width="100%" height="100%">
-          <BarChart data={data} layout="vertical" margin={{ top: 4, right: 30, left: 4, bottom: 4 }}>
-            <XAxis type="number" hide domain={[0, (dataMax) => Math.max(dataMax, 100) * 1.05]} />
-            <YAxis type="category" dataKey="name" width={104} tick={{ fontSize: 12, fill: C.inkSoft }} axisLine={false} tickLine={false} />
-            <Tooltip formatter={(_v, _n, p) => [p.payload.raw, p.payload.name]} contentStyle={{ borderRadius: 12, border: `1px solid ${C.border}`, fontSize: 12 }} />
-            <ReferenceLine x={100} stroke={C.ink} strokeDasharray="3 3" label={{ value: "Goal", position: "insideTopRight", fontSize: 10, fill: C.muted }} />
-            <Bar dataKey="value" radius={[0, 6, 6, 0]} barSize={16}>
-              {data.map((d, i) => <Cell key={i} fill={d.onTrack ? C.primary : C.gold} />)}
-            </Bar>
-          </BarChart>
-        </ResponsiveContainer>
+        <Suspense fallback={<ChartSkeleton />}>
+          <GoalBarChart data={data} />
+        </Suspense>
       </div>
       <div className="ff-body mt-1" style={{ color: C.muted, fontSize: 13 }}>
         {fmt(saved)} saved · {fmt(net)} net profit · {pct(rate)} savings rate this period.
@@ -252,14 +250,9 @@ function Dashboard({ state, calc, setScreen }) {
       <SectionTitle>Where it goes</SectionTitle>
       <Card data-tour="donut" className="p-4">
         <div style={{ height: 200, position: "relative" }}>
-          <ResponsiveContainer width="100%" height="100%">
-            <PieChart>
-              <Pie data={donutData} dataKey="value" nameKey="name" innerRadius={52} outerRadius={84} paddingAngle={2} stroke="none">
-                {donutData.map((d, i) => <Cell key={i} fill={d.color} />)}
-              </Pie>
-              <Tooltip formatter={(v) => fmt(v)} contentStyle={{ borderRadius: 12, border: `1px solid ${C.border}`, fontSize: 12 }} />
-            </PieChart>
-          </ResponsiveContainer>
+          <Suspense fallback={<ChartSkeleton />}>
+            <SpendDonutChart data={donutData} />
+          </Suspense>
           <ChartCat mood={mood} enabled={state.settings.themeFx && state.settings.theme === "pixelkitty"} />
         </div>
         <div className="flex flex-wrap gap-x-4 gap-y-1 mt-2 px-1">
@@ -412,14 +405,9 @@ function TrackScreen({ state, setState, calc, onSavePeriod }) {
       <SectionTitle>This period</SectionTitle>
       <Card data-tour="track-summary" className="p-4">
         <div style={{ height: 180 }}>
-          <ResponsiveContainer width="100%" height="100%">
-            <BarChart data={barData} margin={{ top: 6, right: 6, left: -16, bottom: 0 }}>
-              <XAxis dataKey="name" tick={{ fontSize: 12, fill: C.muted }} axisLine={false} tickLine={false} />
-              <YAxis tick={{ fontSize: 11, fill: C.muted }} axisLine={false} tickLine={false} />
-              <Tooltip formatter={(v) => fmt(v)} contentStyle={{ borderRadius: 12, border: `1px solid ${C.border}`, fontSize: 12 }} />
-              <Bar dataKey="value" radius={[8, 8, 0, 0]}>{barData.map((d, i) => <Cell key={i} fill={d.color} />)}</Bar>
-            </BarChart>
-          </ResponsiveContainer>
+          <Suspense fallback={<ChartSkeleton />}>
+            <CategoryBarChart data={barData} margin={{ top: 6, right: 6, left: -16, bottom: 0 }} />
+          </Suspense>
         </div>
         {state.period.cogsOn && <Row k="Gross profit (income − COGS)" v={fmt(calc.grossProfit)} />}
         <Row k="Net profit (income − expenses)" v={fmt(calc.netProfit)} color={calc.netProfit >= 0 ? C.primary : C.coral} />
@@ -590,14 +578,9 @@ function AnnualScreen({ state, calc, setState }) {
       </div>
       <Card data-tour="annual-chart" className="p-4">
         <div style={{ height: 190 }}>
-          <ResponsiveContainer width="100%" height="100%">
-            <BarChart data={proj} margin={{ top: 6, right: 6, left: -8, bottom: 0 }}>
-              <XAxis dataKey="name" tick={{ fontSize: 12, fill: C.muted }} axisLine={false} tickLine={false} />
-              <YAxis tick={{ fontSize: 10, fill: C.muted }} axisLine={false} tickLine={false} tickFormatter={(v) => "$" + (v / 1000).toFixed(0) + "k"} />
-              <Tooltip formatter={(v) => fmt(v)} contentStyle={{ borderRadius: 12, border: `1px solid ${C.border}`, fontSize: 12 }} />
-              <Bar dataKey="value" radius={[8, 8, 0, 0]}>{proj.map((d, i) => <Cell key={i} fill={d.color} />)}</Bar>
-            </BarChart>
-          </ResponsiveContainer>
+          <Suspense fallback={<ChartSkeleton />}>
+            <CategoryBarChart data={proj} margin={{ top: 6, right: 6, left: -8, bottom: 0 }} yTickFormatter={(v) => "$" + (v / 1000).toFixed(0) + "k"} />
+          </Suspense>
         </div>
       </Card>
 

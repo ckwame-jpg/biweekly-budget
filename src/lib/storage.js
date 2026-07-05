@@ -16,7 +16,7 @@ function writeLS(s) {
 // supabase/schema.sql. Signing in with the same email on two devices is what
 // shares one budget between them.
 async function readCloud() {
-  const sb = getSupabase();
+  const sb = await getSupabase();
   const user = await getUser();
   if (!sb || !user) return null;
   try {
@@ -31,7 +31,7 @@ async function readCloud() {
 }
 
 async function writeCloud(state) {
-  const sb = getSupabase();
+  const sb = await getSupabase();
   const user = await getUser();
   if (!sb || !user) return;
   try {
