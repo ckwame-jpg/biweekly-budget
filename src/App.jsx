@@ -407,9 +407,19 @@ function TrackScreen({ state, setState, calc, onSavePeriod }) {
   const week = showWeeks ? weekTab : "week1"; // weekly/job frequencies just use one bucket
   const setActual = (id, v) => setState((s) => ({ ...s, period: { ...s.period, [week]: { ...s.period[week], [id]: v } } }));
   const setCogs = (k, v) => setState((s) => ({ ...s, period: { ...s.period, cogs: { ...s.period.cogs, [k]: v } } }));
+  const setIncomeOverride = (v) => setState((s) => ({ ...s, period: { ...s.period, incomeOverride: v } }));
+  const toggleIncomeOverride = (on) => setState((s) => ({
+    ...s,
+    period: {
+      ...s.period,
+      incomeOverrideOn: on,
+      // starting fresh? pre-fill with the budgeted figure so you tweak, not retype
+      incomeOverride: on && !num(s.period.incomeOverride) ? calc.incomeBudget : s.period.incomeOverride,
+    },
+  }));
 
   const barData = [
-    { name: "Income", value: calc.incomeBudget, color: C.primary },
+    { name: "Income", value: calc.incomeThisPeriod, color: C.primary },
     { name: "Expenses", value: calc.anyActual ? calc.spentSoFar : calc.expenseBudget, color: C.coral },
     { name: "Net", value: calc.netProfit, color: C.gold },
   ];
@@ -431,11 +441,25 @@ function TrackScreen({ state, setState, calc, onSavePeriod }) {
       <Card data-tour="track-income" className="px-4 py-3">
         <div className="flex items-center justify-between gap-3">
           <div style={{ minWidth: 0 }}>
-            <div className="ff-body" style={{ color: C.ink, fontSize: 14, fontWeight: 600 }}>Auto-tracked from your budget</div>
-            <div className="ff-body mt-0.5" style={{ color: C.muted, fontSize: 12 }}>Set income on the Budget tab — no need to re-enter it here.</div>
+            <div className="ff-body" style={{ color: C.ink, fontSize: 14, fontWeight: 600 }}>
+              {state.period.incomeOverrideOn ? "Actual income this period" : "Auto-tracked from your budget"}
+            </div>
+            <div className="ff-body mt-0.5" style={{ color: C.muted, fontSize: 12 }}>
+              {state.period.incomeOverrideOn ? `Budgeted: ${fmt(calc.incomeBudget)}` : "Set income on the Budget tab — no need to re-enter it here."}
+            </div>
           </div>
-          <span className="ff-num" style={{ color: C.primary, fontWeight: 700, fontSize: 18, flexShrink: 0 }}>{fmt(calc.incomeBudget)}</span>
+          <span className="ff-num" style={{ color: C.primary, fontWeight: 700, fontSize: 18, flexShrink: 0 }}>{fmt(calc.incomeThisPeriod)}</span>
         </div>
+        <label className="flex items-center gap-2 ff-body mt-3" style={{ color: C.muted, fontSize: 13 }}>
+          <input type="checkbox" checked={!!state.period.incomeOverrideOn} onChange={(e) => toggleIncomeOverride(e.target.checked)} />
+          Actual income was different this period
+        </label>
+        {state.period.incomeOverrideOn && (
+          <div className="flex items-center justify-between pt-2 mt-2" style={{ borderTop: `1px solid ${C.border}` }}>
+            <span className="ff-body" style={{ color: C.ink, fontSize: 14 }}>Income received</span>
+            <NumInput value={state.period.incomeOverride} onChange={setIncomeOverride} />
+          </div>
+        )}
       </Card>
 
       {GROUP_KEYS.map((g) => (
@@ -1187,8 +1211,11 @@ export default function App() {
       const lineActual = (id) => num(s.period.week1[id]) + num(s.period.week2[id]);
       const c = {};
       GROUP_KEYS.forEach((k) => { c[k] = s.groups[k].lines.reduce((a, l) => a + lineActual(l.id), 0); });
-      // income is auto-tracked from the budget — snapshot the budgeted figure, not logged actuals
-      const income = s.income.reduce((a, l) => a + num(l.amount), 0);
+      // income is auto-tracked from the budget, unless this period recorded a
+      // one-off actual income that differed from the plan
+      const income = s.period.incomeOverrideOn
+        ? num(s.period.incomeOverride)
+        : s.income.reduce((a, l) => a + num(l.amount), 0);
       const totalExpenses = GROUP_KEYS.reduce((a, k) => a + c[k], 0);
       const snap = {
         id: "p_" + Date.now(), periodNumber: n,
@@ -1199,7 +1226,7 @@ export default function App() {
       nextStart.setDate(nextStart.getDate() + (s.payFrequency === "weekly" ? 7 : s.payFrequency === "job" ? 30 : 14));
       return {
         ...s, history: [...s.history, snap],
-        period: { week1: {}, week2: {}, cogs: { materials: 0, labor: 0, shipping: 0 }, cogsOn: false },
+        period: { week1: {}, week2: {}, cogs: { materials: 0, labor: 0, shipping: 0 }, cogsOn: false, incomeOverrideOn: false, incomeOverride: 0 },
         periodStart: nextStart.toISOString().slice(0, 10),
       };
     });

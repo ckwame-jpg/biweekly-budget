@@ -96,8 +96,35 @@ describe("computeCalc — actual vs. budget switching", () => {
     state.period.week1["i"] = 9999;
     const c = computeCalc(state);
     expect(c.anyActual).toBe(false); // only spending flips this now
+    expect(c.incomeThisPeriod).toBe(1000);
     expect(c.grossProfit).toBe(1000); // income = budget, not the 9999 in the bucket
     expect(c.netProfit).toBe(1000 - 600);
+  });
+
+  it("a one-off income override drives this period's numbers without touching the budget", () => {
+    let state = makeState({ income: [{ id: "i", amount: 1000 }], savingsRateGoal: 0 });
+    state = withGroup(state, "housing", [{ id: "h", amount: 600 }]);
+    state = withGroup(state, "savings", [{ id: "s", amount: 100 }]);
+    state.period.incomeOverrideOn = true;
+    state.period.incomeOverride = 1200; // e.g. overtime this period
+
+    const c = computeCalc(state);
+    expect(c.incomeThisPeriod).toBe(1200);
+    expect(c.incomeBudget).toBe(1000); // plan is untouched
+    expect(c.leftOverBudget).toBe(1000 - 700); // budget view unchanged (700 = 600 + 100 savings)
+    expect(c.netProfit).toBe(1200 - 700); // this period reflects the override
+    expect(c.savingsRateThisPeriod).toBeCloseTo(100 / 1200);
+  });
+
+  it("override off (or missing) falls back to budgeted income", () => {
+    let state = makeState({ income: [{ id: "i", amount: 800 }] });
+    state = withGroup(state, "housing", [{ id: "h", amount: 300 }]);
+    // incomeOverride sits in state but the flag is off — must be ignored
+    state.period.incomeOverrideOn = false;
+    state.period.incomeOverride = 5000;
+    const c = computeCalc(state);
+    expect(c.incomeThisPeriod).toBe(800);
+    expect(c.netProfit).toBe(800 - 300);
   });
 
   it("sums week1 + week2 for a single line item", () => {

@@ -40,10 +40,16 @@ export function computeCalc(state) {
     ? num(state.period.cogs.materials) + num(state.period.cogs.labor) + num(state.period.cogs.shipping)
     : 0;
 
+  // Income normally follows the budget, but a period can record a one-off actual
+  // income that differs from the plan (overtime, a short check, an odd job) without
+  // editing the budget. When that override is on, it drives this period's numbers;
+  // the budget/plan figures (incomeBudget, leftOverBudget) are left untouched.
+  const incomeThisPeriod = state.period.incomeOverrideOn ? num(state.period.incomeOverride) : incomeBudget;
+
   const anyActual = spentSoFar > 0; // has any spending been logged this period
-  const grossProfit = incomeBudget - cogs;
+  const grossProfit = incomeThisPeriod - cogs;
   const netProfit = grossProfit - (anyActual ? spentSoFar : expenseBudget);
-  const periodLeftOver = anyActual ? incomeBudget - spentSoFar : leftOverBudget;
+  const periodLeftOver = incomeThisPeriod - (anyActual ? spentSoFar : expenseBudget);
   const savedThisPeriod = anyActual ? groupActual.savings : groupBudget.savings;
   const ratio = expenseBudget ? spentSoFar / expenseBudget : 0;
 
@@ -54,7 +60,7 @@ export function computeCalc(state) {
   const goalOnTrackSavings = goal > 0 && savedThisPeriod >= goal;
   const goalOnTrackNetProfit = goal > 0 && netProfit >= goal;
 
-  const savingsRateThisPeriod = incomeBudget ? savedThisPeriod / incomeBudget : 0;
+  const savingsRateThisPeriod = incomeThisPeriod ? savedThisPeriod / incomeThisPeriod : 0;
   const savingsRateGoal = num(state.savingsRateGoal);
   const goalRatioSavingsRate = savingsRateGoal > 0 ? savingsRateThisPeriod / savingsRateGoal : 0;
   const goalOnTrackSavingsRate = savingsRateGoal > 0 && savingsRateThisPeriod >= savingsRateGoal;
@@ -69,7 +75,7 @@ export function computeCalc(state) {
   return {
     incomeBudget, groupBudget, expenseBudget, leftOverBudget, savingsRateBudget,
     lineActual, groupActual, spentSoFar, cogs, grossProfit, netProfit,
-    periodLeftOver, savedThisPeriod, ratio, anyActual,
+    periodLeftOver, savedThisPeriod, ratio, anyActual, incomeThisPeriod,
     goalRatioSavings, goalRatioNetProfit, goalOnTrackSavings, goalOnTrackNetProfit,
     savingsRateThisPeriod, goalRatioSavingsRate, goalOnTrackSavingsRate,
     debtBalance, debtPaymentPerPeriod, debtPeriodsToPayoff,
