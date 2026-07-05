@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback, useRef, lazy, Suspense } from "react";
 import {
   Home, Wallet, PlusCircle, CalendarDays, TrendingUp, Settings, X, Check,
-  Plus, Trash2, Target, Sparkles, RotateCcw, Lock, Delete, ArrowDownToLine, RefreshCw, CloudOff,
+  Plus, Trash2, Pencil, Target, Sparkles, RotateCcw, Lock, Delete, ArrowDownToLine, RefreshCw, CloudOff,
   Download, Upload,
 } from "lucide-react";
 
@@ -603,6 +603,37 @@ function MonthlyScreen({ state, setState, calc }) {
   );
 }
 
+// Shared editable fields for a single pay period (date + income + the six
+// category totals), with a live net-profit readout. Used by both the "add a
+// past period" form and the per-entry edit form so they stay identical.
+function PeriodDraftFields({ draft, setField }) {
+  const expenses = GROUP_KEYS.reduce((a, k) => a + num(draft[k]), 0);
+  const net = num(draft.income) - expenses;
+  return (
+    <>
+      <label className="ff-body block" style={{ color: C.muted, fontSize: 11 }}>Pay date</label>
+      <input type="date" value={draft.payDate || ""} onChange={(e) => setField("payDate", e.target.value)}
+        className="ff-body rounded-xl px-3 py-2 mt-1 mb-3 outline-none" style={{ background: C.bg, border: `1px solid ${C.border}`, color: C.ink, fontSize: 14 }} />
+
+      <div className="flex items-center justify-between py-1">
+        <span className="ff-body" style={{ color: C.ink, fontSize: 14 }}>Income</span>
+        <NumInput value={draft.income} onChange={(v) => setField("income", v)} />
+      </div>
+      {GROUP_KEYS.map((k) => (
+        <div key={k} className="flex items-center justify-between py-1">
+          <span className="ff-body" style={{ color: C.ink, fontSize: 14 }}>{GROUP_META[k].label}</span>
+          <NumInput value={draft[k]} onChange={(v) => setField(k, v)} />
+        </div>
+      ))}
+
+      <div className="flex items-center justify-between py-2 mt-1" style={{ borderTop: `1px solid ${C.border}` }}>
+        <span className="ff-body" style={{ color: C.muted, fontSize: 13 }}>Net profit</span>
+        <span className="ff-num" style={{ color: net >= 0 ? C.primary : C.coral, fontWeight: 600, fontSize: 15 }}>{fmtSigned(net)}</span>
+      </div>
+    </>
+  );
+}
+
 function AnnualScreen({ state, calc, setState }) {
   const freq = state.payFrequency || "biweekly";
   const periodsPerYear = freq === "weekly" ? 52 : freq === "job" ? 12 : 26;
@@ -642,8 +673,32 @@ function AnnualScreen({ state, calc, setState }) {
     netProfit: h.netProfit,
     savingsRate: h.income ? h.savings / h.income : 0,
   }));
-  const setPayDate = (id, iso) => setState((s) => ({ ...s, history: s.history.map((h) => h.id === id ? { ...h, payDate: iso } : h) }));
   const deletePeriod = (id) => setState((s) => ({ ...s, history: s.history.filter((h) => h.id !== id) }));
+
+  // edit an existing saved period in place — recompute its expense/net totals from
+  // the edited category values so the same invariants hold as a freshly-saved one
+  const [editingId, setEditingId] = useState(null);
+  const [editDraft, setEditDraft] = useState(null);
+  const draftFromHistory = (h) => {
+    const d = { payDate: h.payDate || new Date().toISOString().slice(0, 10), income: h.income };
+    GROUP_KEYS.forEach((k) => { d[k] = h[k]; });
+    return d;
+  };
+  const startEdit = (h) => { setAdding(false); setEditingId(h.id); setEditDraft(draftFromHistory(h)); };
+  const cancelEdit = () => { setEditingId(null); setEditDraft(null); };
+  const saveEdit = () => {
+    setState((s) => ({
+      ...s,
+      history: s.history.map((h) => {
+        if (h.id !== editingId) return h;
+        const c = {};
+        GROUP_KEYS.forEach((k) => { c[k] = num(editDraft[k]); });
+        const totalExpenses = GROUP_KEYS.reduce((a, k) => a + c[k], 0);
+        return { ...h, payDate: editDraft.payDate, income: num(editDraft.income), ...c, totalExpenses, netProfit: num(editDraft.income) - totalExpenses };
+      }),
+    }));
+    cancelEdit();
+  };
 
   // manually add a past period — e.g. one from before you started using the
   // app, or one you forgot to save at the time
@@ -721,26 +776,7 @@ function AnnualScreen({ state, calc, setState }) {
           <div className="ff-body mb-2" style={{ color: C.muted, fontSize: 12 }}>
             Add a past period — e.g. one from before you started using the app.
           </div>
-          <label className="ff-body block" style={{ color: C.muted, fontSize: 11 }}>Pay date</label>
-          <input type="date" value={draft.payDate} onChange={(e) => setDraft((d) => ({ ...d, payDate: e.target.value }))}
-            className="ff-body rounded-xl px-3 py-2 mt-1 mb-3 outline-none" style={{ background: C.bg, border: `1px solid ${C.border}`, color: C.ink, fontSize: 14 }} />
-
-          <div className="flex items-center justify-between py-1">
-            <span className="ff-body" style={{ color: C.ink, fontSize: 14 }}>Income</span>
-            <NumInput value={draft.income} onChange={(v) => setDraft((d) => ({ ...d, income: v }))} />
-          </div>
-          {GROUP_KEYS.map((k) => (
-            <div key={k} className="flex items-center justify-between py-1">
-              <span className="ff-body" style={{ color: C.ink, fontSize: 14 }}>{GROUP_META[k].label}</span>
-              <NumInput value={draft[k]} onChange={(v) => setDraft((d) => ({ ...d, [k]: v }))} />
-            </div>
-          ))}
-
-          <div className="flex items-center justify-between py-2 mt-1" style={{ borderTop: `1px solid ${C.border}` }}>
-            <span className="ff-body" style={{ color: C.muted, fontSize: 13 }}>Net profit</span>
-            <span className="ff-num" style={{ color: draftNet >= 0 ? C.primary : C.coral, fontWeight: 600, fontSize: 15 }}>{fmtSigned(draftNet)}</span>
-          </div>
-
+          <PeriodDraftFields draft={draft} setField={(k, v) => setDraft((d) => ({ ...d, [k]: v }))} />
           <div className="flex gap-2 mt-3">
             <button onClick={() => { setAdding(false); setDraft(emptyDraft()); }} className="flex-1 rounded-xl py-2.5" style={{ background: C.bg, color: C.ink, border: `1px solid ${C.border}` }}>
               <span className="ff-body" style={{ fontWeight: 600, fontSize: 14 }}>Cancel</span>
@@ -770,13 +806,22 @@ function AnnualScreen({ state, calc, setState }) {
                   <div className="ff-body" style={{ color: C.muted, fontSize: 12 }}>{fmtDate(h.payDate)} · in {fmt(h.income)} · out {fmt(h.totalExpenses)}</div>
                 </div>
                 <div className="ff-num" style={{ color: h.netProfit >= 0 ? C.primary : C.coral, fontWeight: 600, fontSize: 15 }}>{fmtSigned(h.netProfit)}</div>
-                <button onClick={() => deletePeriod(h.id)} className="p-1 ml-2" style={{ color: C.muted }}><Trash2 size={15} /></button>
+                <button onClick={() => (editingId === h.id ? cancelEdit() : startEdit(h))} className="p-1 ml-2" style={{ color: editingId === h.id ? C.primary : C.muted }}><Pencil size={15} /></button>
+                <button onClick={() => deletePeriod(h.id)} className="p-1 ml-1" style={{ color: C.muted }}><Trash2 size={15} /></button>
               </div>
-              <div className="flex items-center gap-2 mt-1">
-                <label className="ff-body" style={{ color: C.muted, fontSize: 11 }}>Pay date</label>
-                <input type="date" value={h.payDate || ""} onChange={(e) => setPayDate(h.id, e.target.value)}
-                  className="ff-body rounded-lg px-2 py-1 outline-none" style={{ background: C.bg, border: `1px solid ${C.border}`, color: C.ink, fontSize: 12 }} />
-              </div>
+              {editingId === h.id && editDraft && (
+                <div className="mt-2 rounded-2xl p-3" style={{ background: C.bg, border: `1px solid ${C.border}` }}>
+                  <PeriodDraftFields draft={editDraft} setField={(k, v) => setEditDraft((d) => ({ ...d, [k]: v }))} />
+                  <div className="flex gap-2 mt-3">
+                    <button onClick={cancelEdit} className="flex-1 rounded-xl py-2" style={{ background: C.surface, color: C.ink, border: `1px solid ${C.border}` }}>
+                      <span className="ff-body" style={{ fontWeight: 600, fontSize: 13 }}>Cancel</span>
+                    </button>
+                    <button onClick={saveEdit} className="flex-1 rounded-xl py-2" style={{ background: C.primary, color: "#fff" }}>
+                      <span className="ff-body" style={{ fontWeight: 600, fontSize: 13 }}>Save changes</span>
+                    </button>
+                  </div>
+                </div>
+              )}
             </div>
           ))}
           <div className="flex items-center py-2 mt-1" style={{ borderTop: `2px solid ${C.border}` }}>
