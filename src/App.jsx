@@ -409,7 +409,7 @@ function TrackScreen({ state, setState, calc, onSavePeriod }) {
   const setCogs = (k, v) => setState((s) => ({ ...s, period: { ...s.period, cogs: { ...s.period.cogs, [k]: v } } }));
 
   const barData = [
-    { name: "Income", value: calc.anyActual ? calc.incomeActual : calc.incomeBudget, color: C.primary },
+    { name: "Income", value: calc.incomeBudget, color: C.primary },
     { name: "Expenses", value: calc.anyActual ? calc.spentSoFar : calc.expenseBudget, color: C.coral },
     { name: "Net", value: calc.netProfit, color: C.gold },
   ];
@@ -427,11 +427,15 @@ function TrackScreen({ state, setState, calc, onSavePeriod }) {
         </div>
       )}
 
-      <SectionTitle>{showWeeks ? `Income — ${week === "week1" ? "Week 1" : "Week 2"}` : "Income"}</SectionTitle>
-      <Card data-tour="track-income" className="px-4 py-2">
-        {state.income.map((l) => (
-          <TrackRow key={l.id} name={l.name} value={state.period[week][l.id]} onChange={(v) => setActual(l.id, v)} total={calc.lineActual(l.id)} budget={l.amount} />
-        ))}
+      <SectionTitle>Income</SectionTitle>
+      <Card data-tour="track-income" className="px-4 py-3">
+        <div className="flex items-center justify-between gap-3">
+          <div style={{ minWidth: 0 }}>
+            <div className="ff-body" style={{ color: C.ink, fontSize: 14, fontWeight: 600 }}>Auto-tracked from your budget</div>
+            <div className="ff-body mt-0.5" style={{ color: C.muted, fontSize: 12 }}>Set income on the Budget tab — no need to re-enter it here.</div>
+          </div>
+          <span className="ff-num" style={{ color: C.primary, fontWeight: 700, fontSize: 18, flexShrink: 0 }}>{fmt(calc.incomeBudget)}</span>
+        </div>
       </Card>
 
       {GROUP_KEYS.map((g) => (
@@ -587,10 +591,10 @@ function AnnualScreen({ state, calc, setState }) {
   const avg = (key) => recentJobHistory.reduce((a, h) => a + h[key], 0) / recentJobHistory.length;
 
   const baseNet = useTrailingAvg ? avg("netProfit") : calc.netProfit;
-  const baseIncome = useTrailingAvg ? avg("income") : (calc.anyActual ? calc.incomeActual : calc.incomeBudget);
+  const baseIncome = useTrailingAvg ? avg("income") : calc.incomeBudget;
   const baseExp = useTrailingAvg ? avg("totalExpenses") : (calc.anyActual ? calc.spentSoFar : calc.expenseBudget);
   const annualIncome = baseIncome * periodsPerYear, annualExp = baseExp * periodsPerYear, annualNet = baseNet * periodsPerYear;
-  const extraPerYear = (calc.anyActual ? calc.lineActual("inc_bonus") : num(state.income.find((i) => i.id === "inc_bonus")?.amount)) * periodsPerYear;
+  const extraPerYear = num(state.income.find((i) => i.id === "inc_bonus")?.amount) * periodsPerYear;
 
   const proj = [
     { name: "Income", value: annualIncome, color: C.primary },
@@ -1183,7 +1187,8 @@ export default function App() {
       const lineActual = (id) => num(s.period.week1[id]) + num(s.period.week2[id]);
       const c = {};
       GROUP_KEYS.forEach((k) => { c[k] = s.groups[k].lines.reduce((a, l) => a + lineActual(l.id), 0); });
-      const income = s.income.reduce((a, l) => a + lineActual(l.id), 0);
+      // income is auto-tracked from the budget — snapshot the budgeted figure, not logged actuals
+      const income = s.income.reduce((a, l) => a + num(l.amount), 0);
       const totalExpenses = GROUP_KEYS.reduce((a, k) => a + c[k], 0);
       const snap = {
         id: "p_" + Date.now(), periodNumber: n,

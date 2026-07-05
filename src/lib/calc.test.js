@@ -75,20 +75,29 @@ describe("computeCalc — actual vs. budget switching", () => {
     expect(c.ratio).toBe(0); // nothing spent so far
   });
 
-  it("switches to actuals once anything is logged in week1/week2", () => {
+  it("switches to actuals once spending is logged in week1/week2", () => {
     let state = makeState({ income: [{ id: "i", amount: 1000 }] });
     state = withGroup(state, "housing", [{ id: "h", amount: 600 }]);
     state = withGroup(state, "savings", [{ id: "s", amount: 100 }]);
     state.period.week1["h"] = 300;
     state.period.week2["h"] = 100;
-    state.period.week1["i"] = 1000;
 
     const c = computeCalc(state);
     expect(c.anyActual).toBe(true);
-    expect(c.incomeActual).toBe(1000);
     expect(c.groupActual.housing).toBe(400);
     expect(c.spentSoFar).toBe(400);
     expect(c.ratio).toBeCloseTo(400 / 700); // 700 = expenseBudget (600 housing + 100 savings)
+  });
+
+  it("income is auto-tracked from the budget — logging income buckets does not change it", () => {
+    let state = makeState({ income: [{ id: "i", amount: 1000 }] });
+    state = withGroup(state, "housing", [{ id: "h", amount: 600 }]);
+    // even if a stale income value sits in a period bucket, income stays budgeted
+    state.period.week1["i"] = 9999;
+    const c = computeCalc(state);
+    expect(c.anyActual).toBe(false); // only spending flips this now
+    expect(c.grossProfit).toBe(1000); // income = budget, not the 9999 in the bucket
+    expect(c.netProfit).toBe(1000 - 600);
   });
 
   it("sums week1 + week2 for a single line item", () => {
@@ -316,7 +325,7 @@ describe("computeCalc — randomized stress test (100 runs, $45k–$100k salarie
       expect(c.expenseBudget).toBeCloseTo(expectedExpenseBudget, 6);
       expect(c.leftOverBudget).toBeCloseTo(c.incomeBudget - c.expenseBudget, 6);
       expect(c.netProfit).toBeCloseTo(c.grossProfit - (c.anyActual ? c.spentSoFar : c.expenseBudget), 6);
-      expect(c.grossProfit).toBeCloseTo((c.anyActual ? c.incomeActual : c.incomeBudget) - c.cogs, 6);
+      expect(c.grossProfit).toBeCloseTo(c.incomeBudget - c.cogs, 6); // income is always the budgeted figure now
 
       // goal ratios: 0 (never NaN/Infinity) whenever the corresponding goal is 0
       if (state.goal <= 0) {

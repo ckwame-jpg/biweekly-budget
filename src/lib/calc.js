@@ -24,9 +24,11 @@ export function computeCalc(state) {
   const leftOverBudget = incomeBudget - expenseBudget;
   const savingsRateBudget = incomeBudget ? groupBudget.savings / incomeBudget : 0;
 
-  // current period actuals (Week 1 + Week 2)
+  // Current-period spending actuals (Week 1 + Week 2). Income is NOT logged on
+  // Track — it's auto-tracked from the Budget screen (the user only ever enters
+  // income once), so income always uses the budgeted figure. Only spending is
+  // logged per period, so "actuals" here means spending actuals.
   const lineActual = (id) => num(state.period.week1[id]) + num(state.period.week2[id]);
-  const incomeActual = state.income.reduce((a, l) => a + lineActual(l.id), 0);
 
   const groupActual = {};
   GROUP_KEYS.forEach((k) => {
@@ -38,11 +40,10 @@ export function computeCalc(state) {
     ? num(state.period.cogs.materials) + num(state.period.cogs.labor) + num(state.period.cogs.shipping)
     : 0;
 
-  const anyActual = incomeActual > 0 || spentSoFar > 0;
-  const incomeForNet = anyActual ? incomeActual : incomeBudget;
-  const grossProfit = incomeForNet - cogs;
+  const anyActual = spentSoFar > 0; // has any spending been logged this period
+  const grossProfit = incomeBudget - cogs;
   const netProfit = grossProfit - (anyActual ? spentSoFar : expenseBudget);
-  const periodLeftOver = anyActual ? incomeActual - spentSoFar : leftOverBudget;
+  const periodLeftOver = anyActual ? incomeBudget - spentSoFar : leftOverBudget;
   const savedThisPeriod = anyActual ? groupActual.savings : groupBudget.savings;
   const ratio = expenseBudget ? spentSoFar / expenseBudget : 0;
 
@@ -53,8 +54,7 @@ export function computeCalc(state) {
   const goalOnTrackSavings = goal > 0 && savedThisPeriod >= goal;
   const goalOnTrackNetProfit = goal > 0 && netProfit >= goal;
 
-  const incomeForRate = anyActual ? incomeActual : incomeBudget;
-  const savingsRateThisPeriod = incomeForRate ? savedThisPeriod / incomeForRate : 0;
+  const savingsRateThisPeriod = incomeBudget ? savedThisPeriod / incomeBudget : 0;
   const savingsRateGoal = num(state.savingsRateGoal);
   const goalRatioSavingsRate = savingsRateGoal > 0 ? savingsRateThisPeriod / savingsRateGoal : 0;
   const goalOnTrackSavingsRate = savingsRateGoal > 0 && savingsRateThisPeriod >= savingsRateGoal;
@@ -68,7 +68,7 @@ export function computeCalc(state) {
 
   return {
     incomeBudget, groupBudget, expenseBudget, leftOverBudget, savingsRateBudget,
-    lineActual, incomeActual, groupActual, spentSoFar, cogs, grossProfit, netProfit,
+    lineActual, groupActual, spentSoFar, cogs, grossProfit, netProfit,
     periodLeftOver, savedThisPeriod, ratio, anyActual,
     goalRatioSavings, goalRatioNetProfit, goalOnTrackSavings, goalOnTrackNetProfit,
     savingsRateThisPeriod, goalRatioSavingsRate, goalOnTrackSavingsRate,
