@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback, useRef, lazy, Suspense } from "react";
 import {
   Home, Wallet, PlusCircle, CalendarDays, TrendingUp, Settings, X, Check,
-  Plus, Trash2, Pencil, Target, Sparkles, RotateCcw, Lock, Delete, ArrowDownToLine, RefreshCw, CloudOff,
+  Plus, Trash2, Pencil, Target, Sparkles, RotateCcw, Lock, Unlock, Delete, ArrowDownToLine, RefreshCw, CloudOff,
   Download, Upload,
 } from "lucide-react";
 
@@ -35,21 +35,23 @@ function Card({ children, style, className = "", ...rest }) {
   );
 }
 
-function NumInput({ value, onChange, align = "right", placeholder = "0", bold = false }) {
+function NumInput({ value, onChange, align = "right", placeholder = "0", bold = false, disabled = false }) {
   // Width grows with the number of digits typed, instead of a fixed box.
   const digits = value ? String(value).length : String(placeholder).length;
   const chWidth = Math.max(digits + 1, 3);
   return (
-    <div className="flex items-center rounded-xl px-2" style={{ background: C.bg, border: `1px solid ${C.border}`, flexShrink: 0 }}>
+    <div className="flex items-center rounded-xl px-2" style={{ background: C.bg, border: `1px solid ${C.border}`, flexShrink: 0, opacity: disabled ? 0.55 : 1 }}>
       <span className="ff-num" style={{ color: C.muted, fontSize: 13 }}>$</span>
       <input
         type="number" inputMode="decimal" placeholder={placeholder}
         value={value ? String(value) : ""}
         onChange={(e) => onChange(parseFloat(e.target.value) || 0)}
+        readOnly={disabled}
         className="ff-num bg-transparent outline-none py-2 px-1"
         style={{
           textAlign: align, color: C.ink, fontSize: 15, fontWeight: bold ? 600 : 500,
           fontVariantNumeric: "tabular-nums", width: chWidth + "ch", transition: "width 0.15s ease",
+          cursor: disabled ? "not-allowed" : "text",
         }}
       />
     </div>
@@ -135,7 +137,7 @@ function DebtLineRow({ name, amount, balance, onName, onAmount, onBalance, onDel
   );
 }
 
-function TrackRow({ name, value, onChange, total, budget }) {
+function TrackRow({ name, value, onChange, total, budget, locked, onToggleLock }) {
   const over = budget > 0 && total > budget;
   return (
     <div className="flex items-center gap-2 py-1.5">
@@ -147,7 +149,13 @@ function TrackRow({ name, value, onChange, total, budget }) {
           </div>
         )}
       </div>
-      <NumInput value={value} onChange={onChange} />
+      <NumInput value={value} onChange={onChange} disabled={locked} />
+      {onToggleLock && (
+        <button onClick={onToggleLock} className="p-1" style={{ color: locked ? C.primary : C.muted, flexShrink: 0 }}
+          title={locked ? "Unlock this amount" : "Lock this amount"} aria-label={locked ? "Unlock this amount" : "Lock this amount"}>
+          {locked ? <Lock size={15} /> : <Unlock size={15} />}
+        </button>
+      )}
     </div>
   );
 }
@@ -405,7 +413,16 @@ function TrackScreen({ state, setState, calc, onSavePeriod }) {
   const showWeeks = (state.payFrequency || "biweekly") === "biweekly";
   const [weekTab, setWeekTab] = useState("week1");
   const week = showWeeks ? weekTab : "week1"; // weekly/job frequencies just use one bucket
-  const setActual = (id, v) => setState((s) => ({ ...s, period: { ...s.period, [week]: { ...s.period[week], [id]: v } } }));
+  // Per-week lock: freezes a line's logged amount for the active week (Week 1 and
+  // Week 2 lock independently) so a confirmed figure can't be edited by accident.
+  const isLocked = (id) => !!(state.period.locks?.[week]?.[id]);
+  const toggleLock = (id) => setState((s) => {
+    const locks = s.period.locks || {};
+    const wk = { ...(locks[week] || {}) };
+    if (wk[id]) delete wk[id]; else wk[id] = true;
+    return { ...s, period: { ...s.period, locks: { ...locks, [week]: wk } } };
+  });
+  const setActual = (id, v) => { if (isLocked(id)) return; setState((s) => ({ ...s, period: { ...s.period, [week]: { ...s.period[week], [id]: v } } })); };
   const setCogs = (k, v) => setState((s) => ({ ...s, period: { ...s.period, cogs: { ...s.period.cogs, [k]: v } } }));
   const setIncomeOverride = (v) => setState((s) => ({ ...s, period: { ...s.period, incomeOverride: v } }));
   const toggleIncomeOverride = (on) => setState((s) => ({
@@ -472,7 +489,8 @@ function TrackScreen({ state, setState, calc, onSavePeriod }) {
           </SectionTitle>
           <Card className="px-4 py-2">
             {state.groups[g].lines.map((l) => (
-              <TrackRow key={l.id} name={l.name} value={state.period[week][l.id]} onChange={(v) => setActual(l.id, v)} total={calc.lineActual(l.id)} budget={l.amount} />
+              <TrackRow key={l.id} name={l.name} value={state.period[week][l.id]} onChange={(v) => setActual(l.id, v)} total={calc.lineActual(l.id)} budget={l.amount}
+                locked={isLocked(l.id)} onToggleLock={() => toggleLock(l.id)} />
             ))}
             <div className="flex justify-between items-center pt-2 mt-1" style={{ borderTop: `1px solid ${C.border}` }}>
               <span className="ff-body" style={{ color: C.muted, fontSize: 13 }}>Spent of {fmt(calc.groupBudget[g])}</span>
@@ -1271,7 +1289,7 @@ export default function App() {
       nextStart.setDate(nextStart.getDate() + (s.payFrequency === "weekly" ? 7 : s.payFrequency === "job" ? 30 : 14));
       return {
         ...s, history: [...s.history, snap],
-        period: { week1: {}, week2: {}, cogs: { materials: 0, labor: 0, shipping: 0 }, cogsOn: false, incomeOverrideOn: false, incomeOverride: 0 },
+        period: { week1: {}, week2: {}, cogs: { materials: 0, labor: 0, shipping: 0 }, cogsOn: false, incomeOverrideOn: false, incomeOverride: 0, locks: { week1: {}, week2: {} } },
         periodStart: nextStart.toISOString().slice(0, 10),
       };
     });

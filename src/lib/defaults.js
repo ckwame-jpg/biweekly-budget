@@ -55,7 +55,7 @@ export const DEFAULT_STATE = {
       { id: "p_gift", name: "Gifts / Misc", amount: 20 },
     ]},
   },
-  period: { week1: {}, week2: {}, cogs: { materials: 0, labor: 0, shipping: 0 }, cogsOn: false, incomeOverrideOn: false, incomeOverride: 0 },
+  period: { week1: {}, week2: {}, cogs: { materials: 0, labor: 0, shipping: 0 }, cogsOn: false, incomeOverrideOn: false, incomeOverride: 0, locks: { week1: {}, week2: {} } },
   monthlyActual: { housing: 0, food: 0, transport: 0, debt: 0, savings: 0, personal: 0 },
   history: [],
 };
