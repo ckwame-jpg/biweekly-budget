@@ -59,12 +59,20 @@ export function computeCalc(state) {
   const goalRatioSavingsRate = savingsRateGoal > 0 ? savingsRateThisPeriod / savingsRateGoal : 0;
   const goalOnTrackSavingsRate = savingsRateGoal > 0 && savingsRateThisPeriod >= savingsRateGoal;
 
+  // debt payoff estimate — the one place a balance (not derivable from income/spending)
+  // is entered, on each debt line item, alongside its per-period payment amount.
+  const debtBalance = sumLines(state.groups.debt.lines, (l) => l.balance);
+  const debtPaymentPerPeriod = groupBudget.debt;
+  const debtPeriodsToPayoff = debtBalance > 0 && debtPaymentPerPeriod > 0
+    ? Math.ceil(debtBalance / debtPaymentPerPeriod) : 0;
+
   return {
     incomeBudget, groupBudget, expenseBudget, leftOverBudget, savingsRateBudget,
     lineActual, incomeActual, groupActual, spentSoFar, cogs, grossProfit, netProfit,
     periodLeftOver, savedThisPeriod, ratio, anyActual,
     goalRatioSavings, goalRatioNetProfit, goalOnTrackSavings, goalOnTrackNetProfit,
     savingsRateThisPeriod, goalRatioSavingsRate, goalOnTrackSavingsRate,
+    debtBalance, debtPaymentPerPeriod, debtPeriodsToPayoff,
   };
 }
 

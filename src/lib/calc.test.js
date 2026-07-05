@@ -184,6 +184,43 @@ describe("computeCalc — goal tracking", () => {
   });
 });
 
+describe("computeCalc — debt payoff estimate", () => {
+  it("computes periods to payoff from balance ÷ per-period payment, rounded up", () => {
+    let state = makeState();
+    state = withGroup(state, "debt", [{ id: "cc", amount: 60, balance: 500 }]);
+    const c = computeCalc(state);
+    expect(c.debtBalance).toBe(500);
+    expect(c.debtPaymentPerPeriod).toBe(60);
+    expect(c.debtPeriodsToPayoff).toBe(9); // 500/60 = 8.33 -> 9
+  });
+
+  it("sums balance across multiple debt lines", () => {
+    let state = makeState();
+    state = withGroup(state, "debt", [
+      { id: "cc", amount: 50, balance: 200 },
+      { id: "loan", amount: 100, balance: 800 },
+    ]);
+    expect(computeCalc(state).debtBalance).toBe(1000);
+  });
+
+  it("is 0 (not null/NaN/Infinity) when there's no balance or no payment", () => {
+    let state = makeState();
+    state = withGroup(state, "debt", [{ id: "cc", amount: 0, balance: 500 }]);
+    expect(computeCalc(state).debtPeriodsToPayoff).toBe(0);
+
+    let state2 = makeState();
+    state2 = withGroup(state2, "debt", [{ id: "cc", amount: 60, balance: 0 }]);
+    expect(computeCalc(state2).debtPeriodsToPayoff).toBe(0);
+  });
+
+  it("treats a missing balance field as 0 (old saves without the field)", () => {
+    let state = makeState();
+    state = withGroup(state, "debt", [{ id: "cc", amount: 60 }]);
+    expect(computeCalc(state).debtBalance).toBe(0);
+    expect(computeCalc(state).debtPeriodsToPayoff).toBe(0);
+  });
+});
+
 describe("computeCalc — randomized stress test (100 runs, $45k–$100k salaries)", () => {
   // Deterministic PRNG (mulberry32) so a failure is reproducible from the seed alone.
   function mulberry32(seed) {

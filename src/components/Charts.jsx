@@ -1,8 +1,8 @@
 // Recharts-backed chart bodies, split into their own chunk (lazy-loaded from
 // App.jsx) since recharts is one of the two heaviest dependencies in the app.
-import { PieChart, Pie, Cell, BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, ReferenceLine } from "recharts";
+import { PieChart, Pie, Cell, BarChart, Bar, LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, ReferenceLine } from "recharts";
 import { C } from "../lib/theme.js";
-import { fmt } from "../lib/format.js";
+import { fmt, pct } from "../lib/format.js";
 
 export function GoalBarChart({ data }) {
   return (
@@ -29,6 +29,21 @@ export function SpendDonutChart({ data }) {
         </Pie>
         <Tooltip formatter={(v) => fmt(v)} contentStyle={{ borderRadius: 12, border: `1px solid ${C.border}`, fontSize: 12 }} />
       </PieChart>
+    </ResponsiveContainer>
+  );
+}
+
+export function TrendChart({ data }) {
+  return (
+    <ResponsiveContainer width="100%" height="100%">
+      <LineChart data={data} margin={{ top: 6, right: 6, left: -8, bottom: 0 }}>
+        <XAxis dataKey="name" tick={{ fontSize: 11, fill: C.muted }} axisLine={false} tickLine={false} />
+        <YAxis yAxisId="left" tick={{ fontSize: 10, fill: C.muted }} axisLine={false} tickLine={false} tickFormatter={(v) => "$" + (v / 1000).toFixed(1) + "k"} />
+        <YAxis yAxisId="right" orientation="right" tick={{ fontSize: 10, fill: C.muted }} axisLine={false} tickLine={false} tickFormatter={(v) => (v * 100).toFixed(0) + "%"} />
+        <Tooltip formatter={(v, name) => [name === "Savings rate" ? pct(v) : fmt(v), name]} contentStyle={{ borderRadius: 12, border: `1px solid ${C.border}`, fontSize: 12 }} />
+        <Line yAxisId="left" type="monotone" dataKey="netProfit" name="Net profit" stroke={C.primary} strokeWidth={2} dot={{ r: 3 }} />
+        <Line yAxisId="right" type="monotone" dataKey="savingsRate" name="Savings rate" stroke={C.gold} strokeWidth={2} dot={{ r: 3 }} />
+      </LineChart>
     </ResponsiveContainer>
   );
 }

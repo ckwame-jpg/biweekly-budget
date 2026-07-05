@@ -37,10 +37,10 @@ export const DEFAULT_STATE = {
       { id: "t_maint", name: "Maintenance", amount: 20 },
     ]},
     debt: { lines: [
-      { id: "d_cc", name: "Credit Card", amount: 50 },
-      { id: "d_loan", name: "Student Loans", amount: 60 },
-      { id: "d_med", name: "Medical Bills", amount: 0 },
-      { id: "d_other", name: "Other Debt", amount: 0 },
+      { id: "d_cc", name: "Credit Card", amount: 50, balance: 0 },
+      { id: "d_loan", name: "Student Loans", amount: 60, balance: 0 },
+      { id: "d_med", name: "Medical Bills", amount: 0, balance: 0 },
+      { id: "d_other", name: "Other Debt", amount: 0, balance: 0 },
     ]},
     savings: { lines: [
       { id: "s_ef", name: "Emergency Fund", amount: 50 },

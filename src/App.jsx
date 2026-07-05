@@ -20,6 +20,7 @@ import { supabaseConfigured, signInWithEmail, signOut, getUser, onAuthChange } f
 const GoalBarChart = lazy(() => import("./components/Charts.jsx").then((m) => ({ default: m.GoalBarChart })));
 const SpendDonutChart = lazy(() => import("./components/Charts.jsx").then((m) => ({ default: m.SpendDonutChart })));
 const CategoryBarChart = lazy(() => import("./components/Charts.jsx").then((m) => ({ default: m.CategoryBarChart })));
+const TrendChart = lazy(() => import("./components/Charts.jsx").then((m) => ({ default: m.TrendChart })));
 function ChartSkeleton() {
   return <div className="w-full h-full rounded-xl" style={{ background: C.bg }} />;
 }
@@ -112,6 +113,24 @@ function LineRow({ name, amount, onName, onAmount, onDelete }) {
         style={{ color: C.ink, fontSize: 14, minWidth: 0, textOverflow: "ellipsis" }} />
       <NumInput value={amount} onChange={onAmount} />
       <button onClick={onDelete} className="p-1" style={{ color: C.muted }}><Trash2 size={15} /></button>
+    </div>
+  );
+}
+
+function DebtLineRow({ name, amount, balance, onName, onAmount, onBalance, onDelete }) {
+  return (
+    <div className="py-1.5">
+      <div className="flex items-center gap-2">
+        <input value={name} onChange={(e) => onName(e.target.value)}
+          className="ff-body flex-1 bg-transparent outline-none py-1"
+          style={{ color: C.ink, fontSize: 14, minWidth: 0, textOverflow: "ellipsis" }} />
+        <NumInput value={amount} onChange={onAmount} />
+        <button onClick={onDelete} className="p-1" style={{ color: C.muted }}><Trash2 size={15} /></button>
+      </div>
+      <div className="flex items-center gap-2 mt-0.5">
+        <span className="ff-body flex-1" style={{ color: C.muted, fontSize: 11 }}>Balance owed</span>
+        <NumInput value={balance} onChange={onBalance} />
+      </div>
     </div>
   );
 }
@@ -224,6 +243,19 @@ function Dashboard({ state, calc, setScreen }) {
         </div>
       </Card>
 
+      {cycle && cycle.day > cycle.cycleDays / 2 && !calc.anyActual && (
+        <Card className="p-4 mt-3 flex items-center gap-3">
+          <Sparkles size={18} color={C.gold} />
+          <div className="flex-1" style={{ minWidth: 0 }}>
+            <div className="ff-body" style={{ color: C.ink, fontSize: 13, fontWeight: 600 }}>You're halfway through this period</div>
+            <div className="ff-body mt-0.5" style={{ color: C.muted, fontSize: 12 }}>Nothing logged yet — jot down what you've spent so far.</div>
+          </div>
+          <button onClick={() => setScreen("track")} className="rounded-xl px-3 py-2" style={{ background: C.primary, color: "#fff", flexShrink: 0 }}>
+            <span className="ff-body" style={{ fontWeight: 600, fontSize: 13 }}>Log it</span>
+          </button>
+        </Card>
+      )}
+
       {state.settings.theme !== "classic" && state.settings.themeFx && (
         <Card className="p-3 mt-3 flex items-center gap-3">
           <ThemeMascotPanel theme={state.settings.theme} mood={mood} enabled={state.settings.themeFx} />
@@ -280,6 +312,16 @@ function BudgetScreen({ state, setState, calc }) {
   const addLine = (g) => setState((s) => ({ ...s, groups: { ...s.groups, [g]: { lines: [...s.groups[g].lines, { id: g[0] + "_" + Date.now(), name: "New item", amount: 0 }] } } }));
   const delLine = (g, id) => setState((s) => ({ ...s, groups: { ...s.groups, [g]: { lines: s.groups[g].lines.filter((l) => l.id !== id) } } }));
 
+  // debt payoff estimate — the only place a balance owed (not derivable from
+  // income/spending) is entered, right where it's used.
+  const payoffDate = (() => {
+    if (!calc.debtPeriodsToPayoff) return null;
+    const days = cycleDaysFor(state.payFrequency) || 14;
+    const d = new Date();
+    d.setDate(d.getDate() + calc.debtPeriodsToPayoff * days);
+    return d.toISOString().slice(0, 10);
+  })();
+
   return (
     <div className="px-4 pb-2">
       <div className="ff-body mt-3 px-1" style={{ color: C.muted, fontSize: 13 }}>
@@ -308,14 +350,41 @@ function BudgetScreen({ state, setState, calc }) {
           </SectionTitle>
           <Card data-tour={g === GROUP_KEYS[0] ? "category-section" : undefined} className="px-4 py-2">
             {state.groups[g].lines.map((l) => (
-              <LineRow key={l.id} name={l.name} amount={l.amount}
-                onName={(v) => setLine(g, l.id, { name: v })} onAmount={(v) => setLine(g, l.id, { amount: v })} onDelete={() => delLine(g, l.id)} />
+              g === "debt" ? (
+                <DebtLineRow key={l.id} name={l.name} amount={l.amount} balance={l.balance}
+                  onName={(v) => setLine(g, l.id, { name: v })} onAmount={(v) => setLine(g, l.id, { amount: v })}
+                  onBalance={(v) => setLine(g, l.id, { balance: v })} onDelete={() => delLine(g, l.id)} />
+              ) : (
+                <LineRow key={l.id} name={l.name} amount={l.amount}
+                  onName={(v) => setLine(g, l.id, { name: v })} onAmount={(v) => setLine(g, l.id, { amount: v })} onDelete={() => delLine(g, l.id)} />
+              )
             ))}
             <div className="flex justify-between items-center pt-2 mt-1" style={{ borderTop: `1px solid ${C.border}` }}>
               <span className="ff-body" style={{ color: C.ink, fontWeight: 600, fontSize: 14 }}>{GROUP_META[g].label} total</span>
               <span className="ff-num" style={{ color: C.ink, fontWeight: 600, fontSize: 16 }}>{fmt(calc.groupBudget[g])}</span>
             </div>
           </Card>
+          {g === "debt" && calc.debtBalance > 0 && (
+            <Card data-tour="debt-payoff" className="p-4 mt-2">
+              <div className="flex items-center gap-2">
+                <TrendingUp size={16} color={C.primary} />
+                <span className="ff-display" style={{ color: C.ink, fontSize: 14, fontWeight: 600 }}>Debt payoff</span>
+              </div>
+              <div className="ff-body mt-1" style={{ color: C.muted, fontSize: 12 }}>
+                {fmt(calc.debtBalance)} owed across your debt lines, at {fmt(calc.debtPaymentPerPeriod)} per period.
+              </div>
+              <div className="flex justify-between items-center mt-2">
+                <span className="ff-body" style={{ color: C.ink, fontSize: 14 }}>Periods left</span>
+                <span className="ff-num" style={{ color: C.ink, fontWeight: 600, fontSize: 16 }}>{calc.debtPeriodsToPayoff || "—"}</span>
+              </div>
+              {payoffDate && (
+                <div className="flex justify-between items-center mt-1">
+                  <span className="ff-body" style={{ color: C.ink, fontSize: 14 }}>Est. payoff</span>
+                  <span className="ff-num" style={{ color: C.primary, fontWeight: 600, fontSize: 16 }}>{fmtDate(payoffDate)}</span>
+                </div>
+              )}
+            </Card>
+          )}
         </div>
       ))}
 
@@ -540,6 +609,11 @@ function AnnualScreen({ state, calc, setState }) {
 
   const hist = state.history;
   const totals = hist.reduce((a, h) => ({ netProfit: a.netProfit + h.netProfit }), { netProfit: 0 });
+  const trendData = hist.slice(-8).map((h) => ({
+    name: "P" + h.periodNumber,
+    netProfit: h.netProfit,
+    savingsRate: h.income ? h.savings / h.income : 0,
+  }));
   const setPayDate = (id, iso) => setState((s) => ({ ...s, history: s.history.map((h) => h.id === id ? { ...h, payDate: iso } : h) }));
   const deletePeriod = (id) => setState((s) => ({ ...s, history: s.history.filter((h) => h.id !== id) }));
 
@@ -583,6 +657,22 @@ function AnnualScreen({ state, calc, setState }) {
           </Suspense>
         </div>
       </Card>
+
+      {trendData.length >= 2 && (
+        <>
+          <SectionTitle>Your trend</SectionTitle>
+          <Card data-tour="trends" className="p-4">
+            <div style={{ height: 180 }}>
+              <Suspense fallback={<ChartSkeleton />}>
+                <TrendChart data={trendData} />
+              </Suspense>
+            </div>
+            <div className="ff-body mt-1" style={{ color: C.muted, fontSize: 12 }}>
+              Net profit and savings rate over your last {trendData.length} saved periods.
+            </div>
+          </Card>
+        </>
+      )}
 
       <SectionTitle>Milestones</SectionTitle>
       <div data-tour="milestones" className="grid grid-cols-2 gap-3">

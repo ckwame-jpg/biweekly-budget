@@ -7,6 +7,11 @@ import { useState, useEffect } from "react";
 import { C } from "../lib/theme.js";
 
 export const TOUR_STEPS = [
+  { screen: "home", target: "settings-gear", title: "Settings", text: "Tap the gear anytime for goals, themes, backups, and sync." },
+  { screen: "home", target: "goal-fields", title: "Your goals", text: "Set a dollar savings goal and a savings-rate goal — both get tracked automatically.", openSettings: true },
+  { screen: "home", target: "theme-picker", title: "Make it yours", text: "Pick light or dark, or a fully themed skin — each with its own colors, fonts, and a little reactive mascot.", openSettings: true },
+  { screen: "home", target: "backup-section", title: "Backups", text: "Export a full backup anytime, or import one back in.", openSettings: true },
+  { screen: "home", target: "sync-section", title: "Cloud sync", text: "Sign in with email to keep one budget in sync across every device you own.", openSettings: true },
   { screen: "home", target: "hero", title: "Money Left Over", text: "What's left after every bill and your savings goal — the number that matters most, front and center." },
   { screen: "home", target: "stats", title: "Quick stats", text: "Your income, total expenses, and savings rate for this period, at a glance." },
   { screen: "home", target: "quickactions", title: "Jump right in", text: "Log spending or edit your budget with one tap, right from Home." },
@@ -20,13 +25,9 @@ export const TOUR_STEPS = [
   { screen: "monthly", target: "paycheck-toggle", title: "Normal vs. bonus months", text: "Switch to a bonus month when you get an extra paycheck — the app splits it 50/30/20 for you automatically." },
   { screen: "monthly", target: "budget-vs-actual", title: "Budget vs. actual", text: "Your monthly plan compared to what actually happened, category by category." },
   { screen: "annual", target: "annual-chart", title: "Annual projection", text: "Your current numbers, projected out across the whole year." },
+  { screen: "annual", target: "trends", title: "Your trend", text: "Once you've saved a couple of periods, see your net profit and savings rate move over time." },
   { screen: "annual", target: "milestones", title: "Milestones", text: "Handy markers — weeks to a cushion, years to a savings target, and more." },
   { screen: "annual", target: "history", title: "Pay period history", text: "Every saved period lives here. Edit a date, delete an entry, or manually add one from the past." },
-  { screen: "home", target: "settings-gear", title: "Settings", text: "Tap the gear anytime for goals, themes, backups, and sync." },
-  { screen: "home", target: "goal-fields", title: "Your goals", text: "Set a dollar savings goal and a savings-rate goal — both get tracked automatically.", openSettings: true },
-  { screen: "home", target: "theme-picker", title: "Make it yours", text: "Pick light or dark, or a fully themed skin — each with its own colors, fonts, and a little reactive mascot.", openSettings: true },
-  { screen: "home", target: "backup-section", title: "Backups", text: "Export a full backup anytime, or import one back in.", openSettings: true },
-  { screen: "home", target: "sync-section", title: "Cloud sync", text: "Sign in with email to keep one budget in sync across every device you own.", openSettings: true },
 ];
 
 export function TourOverlay({ screen, setScreen, showSettings, setShowSettings, onFinish }) {
