@@ -12,7 +12,7 @@ import { DEFAULT_STATE } from "./lib/defaults.js";
 import { num, fmt, fmtSigned, pct, fmtDate, cyclePosition } from "./lib/format.js";
 import { useCalc } from "./lib/calc.js";
 import { useReducedMotion, useCountUp } from "./lib/hooks.js";
-import { loadState, saveState, pullCloud, clearLocal } from "./lib/storage.js";
+import { loadState, saveState, pullCloud, clearLocal, getLastEmail, setLastEmail } from "./lib/storage.js";
 import { supabaseConfigured, signInWithEmail, signOut, getUser, onAuthChange } from "./lib/supabase.js";
 
 // recharts is one of the two heaviest deps in the app (see CLAUDE.md backlog);
@@ -86,6 +86,24 @@ function StatTile({ label, value, sub, color }) {
       <div className="ff-num truncate" style={{ color: color || C.ink, fontSize: "calc(1.25rem * var(--num-scale, 1))", fontWeight: 600, marginTop: 2, fontVariantNumeric: "tabular-nums" }}>{value}</div>
       {sub && <div className="ff-body truncate" style={{ color: C.muted, fontSize: 11, marginTop: 1 }}>{sub}</div>}
     </Card>
+  );
+}
+
+// Always-visible sync status on Home, so it's never a mystery which account
+// (if any) this device is saving to — the main thing that was invisible before.
+function AccountBanner({ authUser, cloudOn, onManage }) {
+  if (!cloudOn) return null; // no cloud configured — pure on-device, nothing to show
+  return (
+    <button onClick={onManage} className="w-full flex items-center gap-2 rounded-2xl px-3 py-2 mt-3"
+      style={{ background: authUser ? C.surface : C.surfaceWarm, border: `1px solid ${C.border}` }}>
+      {authUser ? <RefreshCw size={15} color={C.primary} style={{ flexShrink: 0 }} /> : <CloudOff size={15} color={C.gold} style={{ flexShrink: 0 }} />}
+      <span className="ff-body text-left flex-1 truncate" style={{ minWidth: 0, fontSize: 12, color: C.inkSoft }}>
+        {authUser
+          ? <>Synced as <b style={{ color: C.ink }}>{authUser.email}</b></>
+          : <>Saved on this device only — <b style={{ color: C.ink }}>tap to sign in &amp; sync</b></>}
+      </span>
+      <span className="ff-body" style={{ fontSize: 11, color: C.muted, flexShrink: 0 }}>{authUser ? "Manage" : "Sign in"}</span>
+    </button>
   );
 }
 
@@ -211,7 +229,7 @@ function cycleDaysFor(freq) {
   return freq === "weekly" ? 7 : freq === "job" ? 0 : 14;
 }
 
-function Dashboard({ state, calc, setScreen }) {
+function Dashboard({ state, calc, setScreen, authUser, cloudOn, onOpenSettings }) {
   const reduced = useReducedMotion();
   const hero = useCountUp(calc.leftOverBudget, reduced);
   const ratio = Math.max(0, Math.min(1.35, calc.ratio));
@@ -228,6 +246,7 @@ function Dashboard({ state, calc, setScreen }) {
 
   return (
     <div className="px-4 pb-2">
+      <AccountBanner authUser={authUser} cloudOn={cloudOn} onManage={onOpenSettings} />
       <Card data-tour="hero" className="p-5 mt-3" style={{ background: "linear-gradient(135deg,#163d2c 0%,#0f5138 55%,#18895A 130%)", border: "none" }}>
         <div className="flex items-center justify-between">
           <span className="ff-body" style={{ color: "rgba(255,255,255,0.72)", fontSize: 12, letterSpacing: 0.4 }}>MONEY LEFT OVER · THIS PERIOD</span>
@@ -973,7 +992,7 @@ function WelcomeSheet({ name, onClose, onStartTour }) {
 
 function SettingsSheet({ state, setState, onClose, onReset, onSyncNow, syncBusy, authUser, authBusy, authMessage, onSendMagicLink, onSignOut, onStartTour }) {
   const [pinDraft, setPinDraft] = useState(state.settings.pin || "");
-  const [emailDraft, setEmailDraft] = useState("");
+  const [emailDraft, setEmailDraft] = useState(getLastEmail());
   const cloudOn = supabaseConfigured();
 
   const handleImportFile = (e) => {
@@ -1248,6 +1267,7 @@ export default function App() {
       // in on any device brings your data back. If the account has no row yet,
       // seed it with whatever's on this device.
       if (user && event === "SIGNED_IN") {
+        if (user.email) setLastEmail(user.email);
         const cloud = await pullCloud();
         if (cloud) {
           setState((s) => ({ ...DEFAULT_STATE, ...cloud, settings: { ...DEFAULT_STATE.settings, ...(cloud.settings || {}) } }));
@@ -1340,7 +1360,8 @@ export default function App() {
     setAuthBusy(true);
     setAuthMessage("");
     const { error } = await signInWithEmail(email);
-    setAuthMessage(error ? "Couldn't send that link — check the email and try again." : "Check your email for a sign-in link.");
+    if (!error) setLastEmail(email); // remember it so this device always pre-fills the same address
+    setAuthMessage(error ? "Couldn't send that link — check the email and try again." : `Check ${email} for a sign-in link.`);
     setAuthBusy(false);
   }, []);
 
@@ -1383,7 +1404,7 @@ export default function App() {
       </div>
 
       <div style={{ paddingBottom: "calc(92px + env(safe-area-inset-bottom, 0px))" }}>
-        {screen === "home" && <Dashboard state={state} calc={calc} setScreen={setScreen} />}
+        {screen === "home" && <Dashboard state={state} calc={calc} setScreen={setScreen} authUser={authUser} cloudOn={supabaseConfigured()} onOpenSettings={() => setShowSettings(true)} />}
         {screen === "budget" && <BudgetScreen state={state} setState={setState} calc={calc} />}
         {screen === "track" && <TrackScreen state={state} setState={setState} calc={calc} onSavePeriod={savePeriod} />}
         {screen === "monthly" && <MonthlyScreen state={state} setState={setState} calc={calc} />}

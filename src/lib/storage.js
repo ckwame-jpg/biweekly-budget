@@ -1,6 +1,20 @@
 import { getSupabase, getUser } from "./supabase.js";
 
 const LS_KEY = "biweekly-budget-state-v1";
+const EMAIL_KEY = "biweekly-budget-last-email";
+
+/**
+ * Remember the last email used to sign in on this device, so the sign-in field
+ * pre-fills it every time. This is the main guard against accidentally creating
+ * a second account with a slightly different address. Kept separate from the
+ * budget state so it survives sign-out (which clears the budget, not the email).
+ */
+export function getLastEmail() {
+  try { return localStorage.getItem(EMAIL_KEY) || ""; } catch { return ""; }
+}
+export function setLastEmail(email) {
+  try { if (email) localStorage.setItem(EMAIL_KEY, email); } catch { /* ignore */ }
+}
 
 function readLS() {
   try {
