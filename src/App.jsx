@@ -11,6 +11,7 @@ import { TourOverlay } from "./components/Tour.jsx";
 import { DEFAULT_STATE } from "./lib/defaults.js";
 import { num, fmt, fmtSigned, pct, fmtDate, cyclePosition } from "./lib/format.js";
 import { useCalc } from "./lib/calc.js";
+import { cycleDaysFor, emptyPeriod, buildPeriodSnapshot, addDays, autoRollover } from "./lib/period.js";
 import { useReducedMotion, useCountUp } from "./lib/hooks.js";
 import { loadState, saveState, pullCloud, clearLocal, getLastEmail, setLastEmail } from "./lib/storage.js";
 import { supabaseConfigured, signInWithEmail, signOut, getUser, onAuthChange } from "./lib/supabase.js";
@@ -225,9 +226,6 @@ function GoalCard({ state, calc }) {
 
 /* ============================== screens ============================== */
 // Cycle length in days for each pay frequency. "job" has no fixed cycle (0 = none).
-function cycleDaysFor(freq) {
-  return freq === "weekly" ? 7 : freq === "job" ? 0 : 14;
-}
 
 function Dashboard({ state, calc, setScreen, authUser, cloudOn, onOpenSettings }) {
   const reduced = useReducedMotion();
@@ -550,10 +548,10 @@ function TrackScreen({ state, setState, calc, onSavePeriod }) {
 
       <GoalCard state={state} calc={calc} />
       <button data-tour="save-period" onClick={onSavePeriod} className="w-full mt-4 flex items-center justify-center gap-2 rounded-2xl py-3.5" style={{ background: C.primary, color: "#fff" }}>
-        <ArrowDownToLine size={18} /> <span className="ff-body" style={{ fontWeight: 600, fontSize: 15 }}>Save this period to history</span>
+        <ArrowDownToLine size={18} /> <span className="ff-body" style={{ fontWeight: 600, fontSize: 15 }}>Close this period now</span>
       </button>
       <div className="ff-body text-center mt-2 mb-1" style={{ color: C.muted, fontSize: 12 }}>
-        Saves a snapshot to your Annual tracker, then clears for the next period.
+        Pay periods save to your history automatically when they end. Use this only to close the current one early.
       </div>
     </div>
   );
@@ -1308,31 +1306,35 @@ export default function App() {
   const savePeriod = useCallback(() => {
     setState((s) => {
       const n = (s.history.length ? Math.max(...s.history.map((h) => h.periodNumber)) : 0) + 1;
-      const lineActual = (id) => num(s.period.week1[id]) + num(s.period.week2[id]);
-      const c = {};
-      GROUP_KEYS.forEach((k) => { c[k] = s.groups[k].lines.reduce((a, l) => a + lineActual(l.id), 0); });
-      // income is auto-tracked from the budget, unless this period recorded a
-      // one-off actual income that differed from the plan
-      const income = s.period.incomeOverrideOn
-        ? num(s.period.incomeOverride)
-        : s.income.reduce((a, l) => a + num(l.amount), 0);
-      const totalExpenses = GROUP_KEYS.reduce((a, k) => a + c[k], 0);
-      const snap = {
-        id: "p_" + Date.now(), periodNumber: n,
-        payDate: new Date().toISOString().slice(0, 10),
-        income, ...c, totalExpenses, netProfit: income - totalExpenses,
-      };
-      const nextStart = new Date((s.periodStart || new Date().toISOString().slice(0, 10)) + "T00:00:00");
-      nextStart.setDate(nextStart.getDate() + (s.payFrequency === "weekly" ? 7 : s.payFrequency === "job" ? 30 : 14));
+      const snap = buildPeriodSnapshot(s, n, new Date().toISOString().slice(0, 10));
+      const days = s.payFrequency === "weekly" ? 7 : s.payFrequency === "job" ? 30 : 14;
       return {
         ...s, history: [...s.history, snap],
-        period: { week1: {}, week2: {}, cogs: { materials: 0, labor: 0, shipping: 0 }, cogsOn: false, incomeOverrideOn: false, incomeOverride: 0, locks: { week1: {}, week2: {} } },
-        periodStart: nextStart.toISOString().slice(0, 10),
+        period: emptyPeriod(),
+        periodStart: addDays(s.periodStart, days),
       };
     });
     showToast("Period saved to your Annual tracker");
     setScreen("annual");
   }, []);
+
+  // Automatic rollover: when the current pay period ends, archive it and start a
+  // fresh one — no button required. Runs on load and whenever the app returns to
+  // the foreground (so a period that ends while the app is open still rolls over).
+  useEffect(() => {
+    if (!loaded) return;
+    const run = () => {
+      const res = autoRollover(stateRef.current);
+      if (!res) return;
+      setState(res.next);
+      showToast(res.saved ? "Last pay period saved to your history" : "A new pay period has started");
+    };
+    run();
+    const onVis = () => { if (document.visibilityState === "visible") run(); };
+    document.addEventListener("visibilitychange", onVis);
+    return () => document.removeEventListener("visibilitychange", onVis);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loaded]);
 
   // Explicit save: persist locally and, when signed in, push to this account's
   // cloud row immediately (rather than waiting on the debounced auto-save).

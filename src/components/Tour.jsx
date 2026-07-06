@@ -22,7 +22,7 @@ export const TOUR_STEPS = [
   { screen: "budget", target: "category-section", title: "Expense categories", text: "Expenses are grouped into six categories. Add, rename, or delete any line item freely." },
   { screen: "track", target: "track-income", title: "Track: log as you go", text: "Your income carries over from the Budget tab automatically — here you just log what you actually spend." },
   { screen: "track", target: "track-summary", title: "Live summary", text: "Net profit and savings rate update in real time as you log actuals." },
-  { screen: "track", target: "save-period", title: "Save this period", text: "When the period ends, save it here — it's added to your Annual history and a fresh period begins." },
+  { screen: "track", target: "save-period", title: "Periods save themselves", text: "When a pay period ends it's added to your Annual history automatically and a fresh one begins. This button just lets you close the current one early." },
   { screen: "monthly", target: "paycheck-toggle", title: "Normal vs. bonus months", text: "Switch to a bonus month when you get an extra paycheck — the app splits it 50/30/20 for you automatically." },
   { screen: "monthly", target: "budget-vs-actual", title: "Budget vs. actual", text: "Your monthly plan compared to what actually happened, category by category." },
   { screen: "annual", target: "annual-chart", title: "Annual projection", text: "Your current numbers, projected out across the whole year." },
