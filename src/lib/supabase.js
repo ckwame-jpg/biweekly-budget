@@ -34,6 +34,32 @@ export async function signInWithEmail(email) {
   return sb.auth.signInWithOtp({ email, options: { shouldCreateUser: true } });
 }
 
+/**
+ * Email + password login. Unlike the magic link (which must be opened on the
+ * device you're signing in on), a password can be typed on any device — so this
+ * is the reliable way to pull your cloud budget onto a new phone or computer.
+ */
+export async function signInWithPassword(email, password) {
+  const sb = await getSupabase();
+  if (!sb) return { error: new Error("Supabase is not configured") };
+  return sb.auth.signInWithPassword({ email, password });
+}
+
+export async function signUpWithPassword(email, password) {
+  const sb = await getSupabase();
+  if (!sb) return { error: new Error("Supabase is not configured") };
+  return sb.auth.signUp({ email, password });
+}
+
+// Set/replace the password on the currently signed-in account. Lets accounts
+// that were created passwordless (magic link) add a password so they can log in
+// with it afterwards.
+export async function updatePassword(password) {
+  const sb = await getSupabase();
+  if (!sb) return { error: new Error("Supabase is not configured") };
+  return sb.auth.updateUser({ password });
+}
+
 export async function signOut() {
   const sb = await getSupabase();
   if (!sb) return;

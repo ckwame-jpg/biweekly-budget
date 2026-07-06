@@ -14,7 +14,7 @@ import { useCalc } from "./lib/calc.js";
 import { cycleDaysFor, emptyPeriod, buildPeriodSnapshot, addDays, autoRollover } from "./lib/period.js";
 import { useReducedMotion, useCountUp } from "./lib/hooks.js";
 import { loadState, saveState, pullCloud, clearLocal, getLastEmail, setLastEmail } from "./lib/storage.js";
-import { supabaseConfigured, signInWithEmail, signOut, getUser, onAuthChange } from "./lib/supabase.js";
+import { supabaseConfigured, signInWithEmail, signInWithPassword, signUpWithPassword, updatePassword, signOut, getUser, onAuthChange } from "./lib/supabase.js";
 
 // recharts is one of the two heaviest deps in the app (see CLAUDE.md backlog);
 // split into its own chunk and only fetched once a chart actually renders.
@@ -988,9 +988,11 @@ function WelcomeSheet({ name, onClose, onStartTour }) {
   );
 }
 
-function SettingsSheet({ state, setState, onClose, onReset, onSyncNow, syncBusy, authUser, authBusy, authMessage, onSendMagicLink, onSignOut, onStartTour }) {
+function SettingsSheet({ state, setState, onClose, onReset, onSyncNow, syncBusy, authUser, authBusy, authMessage, onSendMagicLink, onLogIn, onCreateAccount, onSetPassword, onSignOut, onStartTour }) {
   const [pinDraft, setPinDraft] = useState(state.settings.pin || "");
   const [emailDraft, setEmailDraft] = useState(getLastEmail());
+  const [pwDraft, setPwDraft] = useState("");
+  const [showAuthExtra, setShowAuthExtra] = useState(false); // magic-link fallback (signed out) / set-password panel (signed in)
   const cloudOn = supabaseConfigured();
 
   const handleImportFile = (e) => {
@@ -1086,21 +1088,58 @@ function SettingsSheet({ state, setState, onClose, onReset, onSyncNow, syncBusy,
                     Sign out
                   </button>
                 </div>
+                {showAuthExtra ? (
+                  <div className="mt-2 pt-2" style={{ borderTop: `1px solid ${C.border}` }}>
+                    <input value={pwDraft} placeholder="new password (6+ characters)" type="password" autoComplete="new-password"
+                      onChange={(e) => setPwDraft(e.target.value)}
+                      className="ff-body w-full rounded-xl px-3 py-2 outline-none" style={{ background: C.surface, border: `1px solid ${C.border}`, color: C.ink, fontSize: 14 }} />
+                    <button onClick={() => onSetPassword(pwDraft)} disabled={authBusy || !pwDraft}
+                      className="ff-body w-full mt-2 rounded-xl py-2" style={{ background: C.surface, border: `1px solid ${C.border}`, color: C.ink, fontWeight: 600, fontSize: 13, opacity: authBusy || !pwDraft ? 0.6 : 1 }}>
+                      {authBusy ? "Saving…" : "Save password"}
+                    </button>
+                  </div>
+                ) : (
+                  <button onClick={() => setShowAuthExtra(true)} className="ff-body w-full mt-2" style={{ color: C.muted, fontSize: 11, textDecoration: "underline" }}>
+                    Set a password for this account
+                  </button>
+                )}
+                {authMessage && (
+                  <div className="ff-body mt-2" style={{ color: C.inkSoft, fontSize: 12 }}>{authMessage}</div>
+                )}
               </>
             ) : (
               <>
                 <div className="ff-body" style={{ color: C.muted, fontSize: 12, marginBottom: 8 }}>
-                  Sign in with email to sync across devices — no password, just a link sent to your inbox.
+                  Log in with your email &amp; password to load your budget — this works on any device. New here? Create an account.
                 </div>
-                <input value={emailDraft} placeholder="you@example.com" type="email"
+                <input value={emailDraft} placeholder="you@example.com" type="email" autoComplete="email"
                   onChange={(e) => setEmailDraft(e.target.value.trim())}
                   className="ff-body w-full rounded-xl px-3 py-2 outline-none" style={{ background: C.surface, border: `1px solid ${C.border}`, color: C.ink, fontSize: 14 }} />
-                <button onClick={() => onSendMagicLink(emailDraft)} disabled={authBusy || !emailDraft}
-                  className="ff-body w-full mt-2 rounded-xl py-2" style={{ background: C.primary, color: "#fff", fontWeight: 600, fontSize: 13, opacity: authBusy || !emailDraft ? 0.6 : 1 }}>
-                  {authBusy ? "Sending…" : "Send magic link"}
-                </button>
+                <input value={pwDraft} placeholder="password (6+ characters)" type="password" autoComplete="current-password"
+                  onChange={(e) => setPwDraft(e.target.value)}
+                  className="ff-body w-full mt-2 rounded-xl px-3 py-2 outline-none" style={{ background: C.surface, border: `1px solid ${C.border}`, color: C.ink, fontSize: 14 }} />
+                <div className="flex gap-2 mt-2">
+                  <button onClick={() => onLogIn(emailDraft, pwDraft)} disabled={authBusy || !emailDraft || !pwDraft}
+                    className="flex-1 ff-body rounded-xl py-2" style={{ background: C.primary, color: "#fff", fontWeight: 600, fontSize: 13, opacity: authBusy || !emailDraft || !pwDraft ? 0.6 : 1 }}>
+                    {authBusy ? "Working…" : "Log in"}
+                  </button>
+                  <button onClick={() => onCreateAccount(emailDraft, pwDraft)} disabled={authBusy || !emailDraft || !pwDraft}
+                    className="flex-1 ff-body rounded-xl py-2" style={{ background: C.surface, border: `1px solid ${C.border}`, color: C.ink, fontWeight: 600, fontSize: 13, opacity: authBusy || !emailDraft || !pwDraft ? 0.6 : 1 }}>
+                    Create account
+                  </button>
+                </div>
                 {authMessage && (
-                  <div className="ff-body mt-2" style={{ color: C.muted, fontSize: 12 }}>{authMessage}</div>
+                  <div className="ff-body mt-2" style={{ color: C.inkSoft, fontSize: 12 }}>{authMessage}</div>
+                )}
+                {showAuthExtra ? (
+                  <button onClick={() => onSendMagicLink(emailDraft)} disabled={authBusy || !emailDraft}
+                    className="ff-body w-full mt-2 rounded-xl py-2" style={{ background: C.surface, border: `1px dashed ${C.border}`, color: C.inkSoft, fontWeight: 600, fontSize: 12, opacity: authBusy || !emailDraft ? 0.6 : 1 }}>
+                    {authBusy ? "Sending…" : "Email me a one-time sign-in link instead"}
+                  </button>
+                ) : (
+                  <button onClick={() => setShowAuthExtra(true)} className="ff-body w-full mt-2" style={{ color: C.muted, fontSize: 11, textDecoration: "underline" }}>
+                    Forgot password? Use a one-time email link
+                  </button>
                 )}
               </>
             )
@@ -1367,6 +1406,42 @@ export default function App() {
     setAuthBusy(false);
   }, []);
 
+  // Email + password login — works on any device (unlike the magic link, which
+  // must be opened on the device you're signing in on). SIGNED_IN then pulls the
+  // account's cloud budget automatically.
+  const logIn = useCallback(async (email, password) => {
+    setAuthBusy(true);
+    setAuthMessage("");
+    const { error } = await signInWithPassword(email, password);
+    if (!error) setLastEmail(email);
+    else setAuthMessage(/invalid/i.test(error.message) ? "Wrong email or password. New here? Tap Create account." : error.message);
+    setAuthBusy(false);
+  }, []);
+
+  const createAccount = useCallback(async (email, password) => {
+    if (!password || password.length < 6) { setAuthMessage("Pick a password of at least 6 characters."); return; }
+    setAuthBusy(true);
+    setAuthMessage("");
+    const { data, error } = await signUpWithPassword(email, password);
+    if (error) {
+      setAuthMessage(/registered|exists/i.test(error.message) ? "That email already has an account — tap Log in instead." : error.message);
+    } else {
+      setLastEmail(email);
+      // If the project requires email confirmation, there's no session yet.
+      setAuthMessage(data?.session ? "" : `Account created. Check ${email} to confirm it, then log in.`);
+    }
+    setAuthBusy(false);
+  }, []);
+
+  const setPassword = useCallback(async (password) => {
+    if (!password || password.length < 6) { setAuthMessage("Pick a password of at least 6 characters."); return; }
+    setAuthBusy(true);
+    setAuthMessage("");
+    const { error } = await updatePassword(password);
+    setAuthMessage(error ? error.message : "Password set — you can now log in with it on any device.");
+    setAuthBusy(false);
+  }, []);
+
   const handleSignOut = useCallback(async () => {
     // flush the latest to this account's cloud while still signed in, then wipe
     // the device so the next account to sign in restores its own data cleanly
@@ -1439,7 +1514,7 @@ export default function App() {
         <SettingsSheet state={state} setState={setState} onClose={() => setShowSettings(false)} onReset={reset}
           onSyncNow={syncNow} syncBusy={syncBusy}
           authUser={authUser} authBusy={authBusy} authMessage={authMessage}
-          onSendMagicLink={sendMagicLink} onSignOut={handleSignOut}
+          onSendMagicLink={sendMagicLink} onLogIn={logIn} onCreateAccount={createAccount} onSetPassword={setPassword} onSignOut={handleSignOut}
           onStartTour={() => { setShowSettings(false); setTouring(true); }} />
       )}
 
