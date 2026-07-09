@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { GROUP_KEYS } from "./theme.js";
-import { autoRollover, buildPeriodSnapshot, periodHasSpending, cycleDaysFor, addDays } from "./period.js";
+import { autoRollover, buildPeriodSnapshot, periodHasSpending, cycleDaysFor, addDays, advanceDaysFor, nextPeriodNumber, normalizeHistory, monthlyActualsFromHistory } from "./period.js";
 
 function makeState(overrides = {}) {
   const groups = {};
@@ -29,6 +29,78 @@ describe("cycleDaysFor", () => {
 describe("addDays", () => {
   it("advances an ISO date by whole days across a month boundary", () => {
     expect(addDays("2026-01-20", 14)).toBe("2026-02-03");
+  });
+});
+
+describe("advanceDaysFor", () => {
+  it("advances a manual close by frequency, with a 30-day fallback for by-the-job", () => {
+    expect(advanceDaysFor("weekly")).toBe(7);
+    expect(advanceDaysFor("biweekly")).toBe(14);
+    expect(advanceDaysFor("job")).toBe(30); // cycleDaysFor("job") is 0; the manual close still moves forward
+    expect(advanceDaysFor(undefined)).toBe(14);
+  });
+});
+
+describe("nextPeriodNumber", () => {
+  it("is 1 for an empty history", () => {
+    expect(nextPeriodNumber([])).toBe(1);
+  });
+  it("is one past the highest existing period number (not the count)", () => {
+    expect(nextPeriodNumber([{ periodNumber: 3 }, { periodNumber: 1 }])).toBe(4);
+  });
+});
+
+describe("normalizeHistory", () => {
+  it("sorts by pay date and renumbers periods 1..N in that order", () => {
+    const out = normalizeHistory([
+      { id: "b", payDate: "2026-03-01", netProfit: 2 },
+      { id: "a", payDate: "2026-01-01", netProfit: 1 },
+      { id: "c", payDate: "2026-02-01", netProfit: 3 },
+    ]);
+    expect(out.map((h) => h.id)).toEqual(["a", "c", "b"]);
+    expect(out.map((h) => h.periodNumber)).toEqual([1, 2, 3]);
+  });
+  it("slots a back-filled past period into place instead of appending it as latest", () => {
+    const existing = [
+      { id: "p1", payDate: "2026-05-01", periodNumber: 1 },
+      { id: "p2", payDate: "2026-05-15", periodNumber: 2 },
+    ];
+    const backfilled = { id: "old", payDate: "2026-01-01", periodNumber: 3 };
+    const out = normalizeHistory([...existing, backfilled]);
+    expect(out[0].id).toBe("old");
+    expect(out[0].periodNumber).toBe(1); // renumbered as the earliest
+    expect(out.map((h) => h.periodNumber)).toEqual([1, 2, 3]);
+  });
+  it("does not mutate the input array", () => {
+    const input = [{ id: "a", payDate: "2026-02-01", periodNumber: 9 }];
+    const out = normalizeHistory(input);
+    expect(input[0].periodNumber).toBe(9); // original untouched
+    expect(out[0].periodNumber).toBe(1);
+  });
+});
+
+describe("monthlyActualsFromHistory", () => {
+  const history = [
+    { payDate: "2026-03-05", housing: 600, food: 200, transport: 0, debt: 0, savings: 100, personal: 40 },
+    { payDate: "2026-03-19", housing: 610, food: 180, transport: 0, debt: 0, savings: 100, personal: 30 },
+    { payDate: "2026-04-02", housing: 600, food: 150, transport: 0, debt: 0, savings: 100, personal: 20 },
+  ];
+
+  it("sums only the entries whose pay date falls in the given month", () => {
+    const march = monthlyActualsFromHistory(history, "2026-03");
+    expect(march.housing).toBe(1210); // 600 + 610
+    expect(march.food).toBe(380);     // 200 + 180
+    expect(march.personal).toBe(70);  // 40 + 30
+  });
+
+  it("returns all-zero categories for a month with no saved periods", () => {
+    const may = monthlyActualsFromHistory(history, "2026-05");
+    GROUP_KEYS.forEach((k) => expect(may[k]).toBe(0));
+  });
+
+  it("ignores entries with a missing pay date", () => {
+    const out = monthlyActualsFromHistory([{ housing: 999 }], "2026-03");
+    expect(out.housing).toBe(0);
   });
 });
 

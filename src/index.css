@@ -170,6 +170,21 @@
   --num-scale: 0.62;
 }
 
+/* Hero "runway" gauge + modal-sheet backdrop, themed. Classic (light, = :root plus
+   the unstyled data-theme="light") keeps the signature green gradient; every dark
+   skin derives its hero from its own surface -> primary, so the hero follows the
+   theme instead of always rendering classic green (which broke the "never hardcode
+   a hex in a component" guardrail — these values used to be inline in App.jsx). */
+:root {
+  --hero-gradient: linear-gradient(135deg, #163d2c 0%, #0f5138 55%, #18895A 130%);
+  --overlay: rgba(20, 50, 38, 0.4);
+}
+[data-theme="dark"], [data-theme="8bit"], [data-theme="anime"], [data-theme="medieval"],
+[data-theme="cyberpunk"], [data-theme="pirate"], [data-theme="pixelkitty"] {
+  --hero-gradient: linear-gradient(135deg, var(--surface) 0%, var(--primary) 155%);
+  --overlay: rgba(0, 0, 0, 0.55);
+}
+
 html, body, #root {
   height: 100%;
 }

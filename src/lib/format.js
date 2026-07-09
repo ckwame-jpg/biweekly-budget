@@ -9,7 +9,7 @@ export const fmt = (n) => {
 };
 
 export const fmtSigned = (n) =>
-  (num(n) >= 0 ? "+" : "−") + "$" + Math.abs(Math.round(num(n))).toLocaleString("en-US");
+  (num(n) >= 0 ? "+" : "-") + "$" + Math.abs(Math.round(num(n))).toLocaleString("en-US");
 
 export const pct = (n) => (isFinite(n) ? (n * 100).toFixed(1) : "0.0") + "%";
 
@@ -22,8 +22,11 @@ export const fmtDate = (iso) => {
 };
 
 // Where "today" falls in the current pay cycle, given its start date and length.
-// Handles a start date in the future or long past by wrapping into the 1–cycleDays range.
 // cycleDays of 0/falsy (e.g. "by the job", which has no fixed cycle) returns null.
+// A future start date (e.g. after closing a period early, which advances to the
+// next payday) returns { upcoming: true, daysUntilStart, startDate } so the UI can
+// say "next period starts <date>" honestly, instead of wrapping the negative offset
+// into a misleading "Day 4 of 14".
 export const cyclePosition = (periodStart, cycleDays = 14) => {
   if (!periodStart || !cycleDays) return null;
   const start = new Date(periodStart + "T00:00:00");
@@ -31,6 +34,9 @@ export const cyclePosition = (periodStart, cycleDays = 14) => {
   const now = new Date();
   now.setHours(0, 0, 0, 0);
   const diffDays = Math.floor((now - start) / 86400000);
-  const day = ((diffDays % cycleDays) + cycleDays) % cycleDays + 1;
-  return { day, cycleDays, week: cycleDays > 7 ? (day <= 7 ? 1 : 2) : null };
+  if (diffDays < 0) {
+    return { upcoming: true, daysUntilStart: -diffDays, startDate: periodStart, cycleDays, day: 0, week: null };
+  }
+  const day = (diffDays % cycleDays) + 1;
+  return { upcoming: false, day, cycleDays, week: cycleDays > 7 ? (day <= 7 ? 1 : 2) : null };
 };
