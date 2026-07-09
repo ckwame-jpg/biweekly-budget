@@ -13,7 +13,7 @@ import { num, fmt, fmtSigned, pct, fmtDate, cyclePosition } from "./lib/format.j
 import { useCalc, spendStatusKey } from "./lib/calc.js";
 import { cycleDaysFor, advanceDaysFor, nextPeriodNumber, normalizeHistory, monthlyActualsFromHistory, emptyPeriod, buildPeriodSnapshot, addDays, autoRollover } from "./lib/period.js";
 import { useReducedMotion, useCountUp, useIsDesktop } from "./lib/hooks.js";
-import { loadState, saveState, pullCloud, clearLocal, getLastEmail, setLastEmail, localUpdatedAt } from "./lib/storage.js";
+import { loadLocal, saveState, pullCloud, clearLocal, getLastEmail, setLastEmail, localUpdatedAt } from "./lib/storage.js";
 import { supabaseConfigured, signInWithEmail, signInWithPassword, signUpWithPassword, updatePassword, signOut, getUser, onAuthChange } from "./lib/supabase.js";
 
 // recharts is one of the two heaviest deps in the app (see CLAUDE.md backlog);
@@ -1501,12 +1501,21 @@ export default function App() {
   const [authBusy, setAuthBusy] = useState(false);
   const [authMessage, setAuthMessage] = useState("");
 
-  // initial load (local, then cloud once signed in)
+  // Initial load: render instantly from the local copy (synchronous — no network,
+  // no Supabase import), then reconcile with the cloud in the background, adopting
+  // it only if it's newer than what this device last saved. Previously the first
+  // paint awaited the whole cloud round-trip (download the ~210KB Supabase SDK +
+  // validate the login + fetch the row), which is what made "Loading your budget…"
+  // linger for signed-in users even though their data was already on the device.
   useEffect(() => {
+    const local = loadLocal();
+    if (local) setState(normalizeState(local));
+    setLoaded(true);
     (async () => {
-      const saved = await loadState();
-      if (saved) setState(normalizeState(saved));
-      setLoaded(true);
+      try {
+        const cloud = await pullCloud();
+        if (cloud && (cloud._updatedAt || 0) > localUpdatedAt()) setState(normalizeState(cloud));
+      } catch { /* offline / cloud unreachable — the local copy is already showing */ }
     })();
   }, []);
 
