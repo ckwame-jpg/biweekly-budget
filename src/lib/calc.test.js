@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { computeCalc } from "./calc.js";
+import { computeCalc, spendStatusKey } from "./calc.js";
 import { GROUP_KEYS } from "./theme.js";
 
 // Minimal valid state builder — every field computeCalc reads, with sane defaults.
@@ -257,6 +257,80 @@ describe("computeCalc — debt payoff estimate", () => {
   });
 });
 
+describe("computeCalc — committed expenses (no mid-period cliff)", () => {
+  it("a small logged actual does not collapse expenses to just what's logged", () => {
+    let state = makeState({ income: [{ id: "i", amount: 1000 }] });
+    state = withGroup(state, "housing", [{ id: "h", amount: 600 }]);
+    state = withGroup(state, "savings", [{ id: "s", amount: 100 }]);
+    state.period.week1["h"] = 5; // logged a tiny bit of a big category
+    const c = computeCalc(state);
+    expect(c.anyActual).toBe(true);
+    expect(c.committedExpenses).toBe(700); // still the full plan: max(5,600) + max(0,100)
+    expect(c.netProfit).toBe(300); // 1000 − 700, NOT 1000 − 5 = 995
+    expect(c.periodLeftOver).toBe(300);
+  });
+
+  it("committed expenses rise above budget only in categories that are over", () => {
+    let state = makeState({ income: [{ id: "i", amount: 1000 }] });
+    state = withGroup(state, "housing", [{ id: "h", amount: 600 }]);
+    state = withGroup(state, "food", [{ id: "f", amount: 200 }]);
+    state.period.week1["h"] = 750; // housing over by 150
+    state.period.week1["f"] = 50;  // food under (rest still coming)
+    const c = computeCalc(state);
+    expect(c.committedByGroup.housing).toBe(750); // max(750, 600)
+    expect(c.committedByGroup.food).toBe(200);    // max(50, 200)
+    expect(c.committedExpenses).toBe(950);
+    expect(c.netProfit).toBe(50); // 1000 − 950
+  });
+
+  it("savedThisPeriod does not drop to zero when unrelated spending is logged", () => {
+    let state = makeState({ income: [{ id: "i", amount: 1000 }], goal: 100 });
+    state = withGroup(state, "housing", [{ id: "h", amount: 600 }]);
+    state = withGroup(state, "savings", [{ id: "s", amount: 100 }]);
+    state.period.week1["h"] = 20; // logged spending in a NON-savings category
+    const c = computeCalc(state);
+    expect(c.savedThisPeriod).toBe(100); // still the planned savings, not 0
+    expect(c.goalOnTrackSavings).toBe(true);
+  });
+
+  it("equals the old budget basis when nothing is logged (no regression at period start)", () => {
+    let state = makeState({ income: [{ id: "i", amount: 1000 }] });
+    state = withGroup(state, "housing", [{ id: "h", amount: 600 }]);
+    state = withGroup(state, "savings", [{ id: "s", amount: 100 }]);
+    const c = computeCalc(state);
+    expect(c.committedExpenses).toBe(c.expenseBudget);
+    expect(c.periodLeftOver).toBe(c.leftOverBudget);
+  });
+});
+
+describe("spendStatusKey — time-aware spend gauge", () => {
+  it("is over when spend exceeds the full-period budget, at any point", () => {
+    expect(spendStatusKey(1.2, 0.1)).toBe("over");
+    expect(spendStatusKey(1.01, 0.9)).toBe("over");
+  });
+  it("is close at 85%+ of budget regardless of time", () => {
+    expect(spendStatusKey(0.9, 0.1)).toBe("close");
+    expect(spendStatusKey(0.85, 0.99)).toBe("close");
+  });
+  it("flags ahead-of-pace once past a quarter of the period", () => {
+    expect(spendStatusKey(0.5, 0.29)).toBe("ahead"); // 50% spent, 29% elapsed
+    expect(spendStatusKey(0.6, 0.4)).toBe("ahead");
+  });
+  it("does not cry wolf in the first quarter (front-loaded bills like rent)", () => {
+    expect(spendStatusKey(0.5, 0.1)).toBe("ontrack"); // day 1–2, rent paid, fine
+    expect(spendStatusKey(0.4, 0.2)).toBe("ontrack");
+  });
+  it("is on track when spending trails the calendar", () => {
+    expect(spendStatusKey(0.3, 0.5)).toBe("ontrack");
+    expect(spendStatusKey(0.7, 0.8)).toBe("ontrack"); // 70% spent, 80% elapsed
+  });
+  it("treats a null cycle (by-the-job) as time-blind — absolute thresholds only", () => {
+    expect(spendStatusKey(0.5, null)).toBe("ontrack");
+    expect(spendStatusKey(0.9, null)).toBe("close");
+    expect(spendStatusKey(1.1, null)).toBe("over");
+  });
+});
+
 describe("computeCalc — randomized stress test (100 runs, $45k–$100k salaries)", () => {
   // Deterministic PRNG (mulberry32) so a failure is reproducible from the seed alone.
   function mulberry32(seed) {
@@ -340,7 +414,7 @@ describe("computeCalc — randomized stress test (100 runs, $45k–$100k salarie
       // every numeric field computeCalc returns must be a finite number
       for (const [key, val] of Object.entries(c)) {
         if (typeof val === "function" || typeof val === "boolean") continue;
-        if (key === "groupBudget" || key === "groupActual") {
+        if (key === "groupBudget" || key === "groupActual" || key === "committedByGroup") {
           GROUP_KEYS.forEach((g) => expect(isFiniteNum(val[g]), `${key}.${g} run ${run}`).toBe(true));
           continue;
         }
@@ -351,8 +425,11 @@ describe("computeCalc — randomized stress test (100 runs, $45k–$100k salarie
       const expectedExpenseBudget = GROUP_KEYS.reduce((a, k) => a + c.groupBudget[k], 0);
       expect(c.expenseBudget).toBeCloseTo(expectedExpenseBudget, 6);
       expect(c.leftOverBudget).toBeCloseTo(c.incomeBudget - c.expenseBudget, 6);
-      expect(c.netProfit).toBeCloseTo(c.grossProfit - (c.anyActual ? c.spentSoFar : c.expenseBudget), 6);
+      expect(c.netProfit).toBeCloseTo(c.grossProfit - c.committedExpenses, 6);
       expect(c.grossProfit).toBeCloseTo(c.incomeBudget - c.cogs, 6); // income is always the budgeted figure now
+      // committed spend is never below the plan, and never below what's already logged
+      expect(c.committedExpenses).toBeGreaterThanOrEqual(c.expenseBudget - 1e-6);
+      expect(c.committedExpenses).toBeGreaterThanOrEqual(c.spentSoFar - 1e-6);
 
       // goal ratios: 0 (never NaN/Infinity) whenever the corresponding goal is 0
       if (state.goal <= 0) {

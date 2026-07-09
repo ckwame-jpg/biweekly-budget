@@ -46,7 +46,15 @@ The user only ever enters **(1) income** and **(2) spending**. Everything else i
 - Net Profit = Gross Profit − Total Expenses;  Gross Profit = Income − COGS.
 - Money Left Over = Income − Total Expenses.
 - Savings Rate = Savings ÷ Income.
-- Annual projection = current period × 26.
+- **In-period figures (net profit, money-left, savings) use "committed" expenses**
+  = per category `max(logged actual, budget)`. Unspent budget is still coming this
+  period (rent/bills), so logging a little can only reveal you're going OVER a
+  category, never under. This replaced an `anyActual` cliff where one small logged
+  actual collapsed expenses to just that amount and inflated net profit for the rest
+  of the period. The Home pace gauge (spentSoFar ÷ budget, via `spendStatusKey`,
+  which also weighs time elapsed) is a separate signal and still uses raw actuals.
+- Annual projection = trailing average of saved history (by-the-job) else committed
+  expenses × periods/year — never the in-flight period's raw partial actuals.
 - Bonus paycheck = one bi-weekly income; suggested split 50% debt / 30% savings / 20% fun.
 
 ## Decisions already made — don't silently flip these
@@ -94,7 +102,9 @@ monthlyPaychecks          // 2 | 3
 income  [ {id,name,amount} ]
 groups  { housing|food|transport|debt|savings|personal: { lines:[{id,name,amount}] } }
 period  { week1:{lineId:amt}, week2:{lineId:amt}, cogs:{materials,labor,shipping}, cogsOn }
-monthlyActual { housing,food,transport,debt,savings,personal }  // category-level
+monthlyActual { housing,food,transport,debt,savings,personal }  // legacy/unused: the
+                       // Monthly "actual" column is now DERIVED from history that lands
+                       // in the current month + the in-flight period (monthlyActualsFromHistory)
 history [ {id, periodNumber, payDate (ISO), income, <6 group totals>, totalExpenses, netProfit} ]
 ```
 

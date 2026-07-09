@@ -8,12 +8,12 @@ import {
 import { C, GROUP_KEYS, GROUP_META, THEMES } from "./lib/theme.js";
 import { ThemeMascotPanel, ChartCat } from "./components/ThemeMascot.jsx";
 import { TourOverlay } from "./components/Tour.jsx";
-import { DEFAULT_STATE } from "./lib/defaults.js";
+import { DEFAULT_STATE, normalizeState } from "./lib/defaults.js";
 import { num, fmt, fmtSigned, pct, fmtDate, cyclePosition } from "./lib/format.js";
-import { useCalc } from "./lib/calc.js";
-import { cycleDaysFor, emptyPeriod, buildPeriodSnapshot, addDays, autoRollover } from "./lib/period.js";
+import { useCalc, spendStatusKey } from "./lib/calc.js";
+import { cycleDaysFor, advanceDaysFor, nextPeriodNumber, normalizeHistory, monthlyActualsFromHistory, emptyPeriod, buildPeriodSnapshot, addDays, autoRollover } from "./lib/period.js";
 import { useReducedMotion, useCountUp } from "./lib/hooks.js";
-import { loadState, saveState, pullCloud, clearLocal, getLastEmail, setLastEmail } from "./lib/storage.js";
+import { loadState, saveState, pullCloud, clearLocal, getLastEmail, setLastEmail, localUpdatedAt } from "./lib/storage.js";
 import { supabaseConfigured, signInWithEmail, signInWithPassword, signUpWithPassword, updatePassword, signOut, getUser, onAuthChange } from "./lib/supabase.js";
 
 // recharts is one of the two heaviest deps in the app (see CLAUDE.md backlog);
@@ -36,17 +36,33 @@ function Card({ children, style, className = "", ...rest }) {
   );
 }
 
-function NumInput({ value, onChange, align = "right", placeholder = "0", bold = false, disabled = false }) {
-  // Width grows with the number of digits typed, instead of a fixed box.
-  const digits = value ? String(value).length : String(placeholder).length;
-  const chWidth = Math.max(digits + 1, 3);
+// Keeps only digits and a single decimal point from raw typed text.
+function cleanDecimal(raw) {
+  let v = String(raw).replace(/[^0-9.]/g, "");
+  const dot = v.indexOf(".");
+  if (dot !== -1) v = v.slice(0, dot + 1) + v.slice(dot + 1).replace(/\./g, ""); // keep only the first dot
+  return v;
+}
+
+function NumInput({ value, onChange, align = "right", placeholder = "0", bold = false, disabled = false, ariaLabel }) {
+  // While focused, hold the raw string being typed (draft) so intermediate values
+  // like "0", "0." and "0.50" survive instead of being wiped by a parse-on-every-
+  // keystroke round-trip — 0 is falsy, so the old field blanked itself and cents
+  // were untypeable. type is "text" + inputMode="decimal" because type="number"
+  // drops a trailing "." in many browsers. Downstream calc still updates live.
+  const [draft, setDraft] = useState(null);
+  const shown = draft != null ? draft : (value ? String(value) : "");
+  const chWidth = Math.max((shown.length || String(placeholder).length) + 1, 3);
+  const handle = (e) => { const v = cleanDecimal(e.target.value); setDraft(v); onChange(parseFloat(v) || 0); };
   return (
     <div className="flex items-center rounded-xl px-2" style={{ background: C.bg, border: `1px solid ${C.border}`, flexShrink: 0, opacity: disabled ? 0.55 : 1 }}>
       <span className="ff-num" style={{ color: C.muted, fontSize: 13 }}>$</span>
       <input
-        type="number" inputMode="decimal" placeholder={placeholder}
-        value={value ? String(value) : ""}
-        onChange={(e) => onChange(parseFloat(e.target.value) || 0)}
+        type="text" inputMode="decimal" placeholder={placeholder} aria-label={ariaLabel}
+        value={shown}
+        onFocus={(e) => setDraft(e.target.value)}
+        onChange={handle}
+        onBlur={() => setDraft(null)}
         readOnly={disabled}
         className="ff-num bg-transparent outline-none py-2 px-1"
         style={{
@@ -59,16 +75,22 @@ function NumInput({ value, onChange, align = "right", placeholder = "0", bold = 
   );
 }
 
-function PercentInput({ value, onChange }) {
-  // value is a decimal (0.2 = 20%); the field shows/edits the whole percent.
-  const display = value ? String(Math.round(value * 1000) / 10) : "";
-  const chWidth = Math.max((display || "0").length + 1, 2);
+function PercentInput({ value, onChange, ariaLabel = "Percent" }) {
+  // value is a decimal (0.2 = 20%); the field shows/edits the whole percent. Same
+  // draft-string handling as NumInput so "22.5" and a leading "0" stay typeable.
+  const [draft, setDraft] = useState(null);
+  const canonical = value ? String(Math.round(value * 1000) / 10) : "";
+  const shown = draft != null ? draft : canonical;
+  const chWidth = Math.max((shown.length || 1) + 1, 2);
+  const handle = (e) => { const v = cleanDecimal(e.target.value); setDraft(v); onChange((parseFloat(v) || 0) / 100); };
   return (
     <div className="flex items-center rounded-xl px-2" style={{ background: C.bg, border: `1px solid ${C.border}`, flexShrink: 0 }}>
       <input
-        type="number" inputMode="decimal" placeholder="0"
-        value={display}
-        onChange={(e) => onChange((parseFloat(e.target.value) || 0) / 100)}
+        type="text" inputMode="decimal" placeholder="0" aria-label={ariaLabel}
+        value={shown}
+        onFocus={(e) => setDraft(e.target.value)}
+        onChange={handle}
+        onBlur={() => setDraft(null)}
         className="ff-num bg-transparent outline-none py-2 px-1"
         style={{
           textAlign: "left", color: C.ink, fontSize: 15, fontWeight: 500,
@@ -129,11 +151,11 @@ function Row({ k, v, color }) {
 function LineRow({ name, amount, onName, onAmount, onDelete }) {
   return (
     <div className="flex items-center gap-2 py-1.5">
-      <input value={name} onChange={(e) => onName(e.target.value)}
+      <input value={name} onChange={(e) => onName(e.target.value)} aria-label="Line item name"
         className="ff-body flex-1 bg-transparent outline-none py-1"
         style={{ color: C.ink, fontSize: 14, minWidth: 0, textOverflow: "ellipsis" }} />
-      <NumInput value={amount} onChange={onAmount} />
-      <button onClick={onDelete} className="p-1" style={{ color: C.muted }}><Trash2 size={15} /></button>
+      <NumInput value={amount} onChange={onAmount} ariaLabel={`${name || "Line item"} amount`} />
+      <button onClick={onDelete} className="p-1" style={{ color: C.muted }} aria-label={`Delete ${name || "line item"}`}><Trash2 size={15} /></button>
     </div>
   );
 }
@@ -142,15 +164,15 @@ function DebtLineRow({ name, amount, balance, onName, onAmount, onBalance, onDel
   return (
     <div className="py-1.5">
       <div className="flex items-center gap-2">
-        <input value={name} onChange={(e) => onName(e.target.value)}
+        <input value={name} onChange={(e) => onName(e.target.value)} aria-label="Debt name"
           className="ff-body flex-1 bg-transparent outline-none py-1"
           style={{ color: C.ink, fontSize: 14, minWidth: 0, textOverflow: "ellipsis" }} />
-        <NumInput value={amount} onChange={onAmount} />
-        <button onClick={onDelete} className="p-1" style={{ color: C.muted }}><Trash2 size={15} /></button>
+        <NumInput value={amount} onChange={onAmount} ariaLabel={`${name || "Debt"} payment per period`} />
+        <button onClick={onDelete} className="p-1" style={{ color: C.muted }} aria-label={`Delete ${name || "debt"}`}><Trash2 size={15} /></button>
       </div>
       <div className="flex items-center gap-2 mt-0.5">
         <span className="ff-body flex-1" style={{ color: C.muted, fontSize: 11 }}>Balance owed</span>
-        <NumInput value={balance} onChange={onBalance} />
+        <NumInput value={balance} onChange={onBalance} ariaLabel={`${name || "Debt"} balance owed`} />
       </div>
     </div>
   );
@@ -168,7 +190,7 @@ function TrackRow({ name, value, onChange, total, budget, locked, onToggleLock }
           </div>
         )}
       </div>
-      <NumInput value={value} onChange={onChange} disabled={locked} />
+      <NumInput value={value} onChange={onChange} disabled={locked} ariaLabel={`${name} spent this week`} />
       {onToggleLock && (
         <button onClick={onToggleLock} className="p-1" style={{ color: locked ? C.primary : C.muted, flexShrink: 0 }}
           title={locked ? "Unlock this amount" : "Lock this amount"} aria-label={locked ? "Unlock this amount" : "Lock this amount"}>
@@ -225,34 +247,42 @@ function GoalCard({ state, calc }) {
 }
 
 /* ============================== screens ============================== */
-// Cycle length in days for each pay frequency. "job" has no fixed cycle (0 = none).
-
 function Dashboard({ state, calc, setScreen, authUser, cloudOn, onOpenSettings }) {
   const reduced = useReducedMotion();
   const hero = useCountUp(calc.leftOverBudget, reduced);
+  const cycle = cyclePosition(state.periodStart, cycleDaysFor(state.payFrequency));
+  // Spend status now weighs pace against how much of the period has elapsed, not
+  // just the absolute % of budget — so "80% spent by day 4" reads honestly instead
+  // of "On track". See spendStatusKey for the thresholds and the early-period guard.
+  const elapsedFraction = cycle && !cycle.upcoming ? cycle.day / cycle.cycleDays : null;
   const ratio = Math.max(0, Math.min(1.35, calc.ratio));
-  const gaugeColor = calc.ratio <= 0.85 ? C.primary : calc.ratio <= 1 ? C.gold : C.coral;
-  const status = calc.ratio <= 0.85 ? "On track" : calc.ratio <= 1 ? "Cutting it close" : "Over budget";
-  const mood = calc.ratio <= 0.85 ? "happy" : calc.ratio <= 1 ? "neutral" : "worried";
-  const moodCaption = mood === "happy" ? "On track — nice work!" : mood === "neutral" ? "Getting close — keep an eye on it." : "Over budget — let's adjust.";
+  const statusKey = spendStatusKey(calc.ratio, elapsedFraction);
+  const gaugeColor = statusKey === "over" ? C.coral : statusKey === "ontrack" ? C.primary : C.gold;
+  const status = { over: "Over budget", close: "Cutting it close", ahead: "Ahead of pace", ontrack: "On track" }[statusKey];
+  const mood = statusKey === "ontrack" ? "happy" : statusKey === "over" ? "worried" : "neutral";
+  const moodCaption = statusKey === "ontrack" ? "On track — nice work!"
+    : statusKey === "over" ? "Over budget — let's adjust."
+    : statusKey === "ahead" ? "Spending a little fast — ease up if you can."
+    : "Getting close — keep an eye on it.";
 
   const donutData = GROUP_KEYS
     .map((k) => ({ name: GROUP_META[k].label, value: calc.groupBudget[k], color: GROUP_META[k].color }))
     .filter((d) => d.value > 0);
   const leftToSpend = calc.expenseBudget - calc.spentSoFar;
-  const cycle = cyclePosition(state.periodStart, cycleDaysFor(state.payFrequency));
 
   return (
     <div className="px-4 pb-2">
       <AccountBanner authUser={authUser} cloudOn={cloudOn} onManage={onOpenSettings} />
-      <Card data-tour="hero" className="p-5 mt-3" style={{ background: "linear-gradient(135deg,#163d2c 0%,#0f5138 55%,#18895A 130%)", border: "none" }}>
+      <Card data-tour="hero" className="p-5 mt-3" style={{ background: C.heroGradient, border: "none" }}>
         <div className="flex items-center justify-between">
           <span className="ff-body" style={{ color: "rgba(255,255,255,0.72)", fontSize: 12, letterSpacing: 0.4 }}>MONEY LEFT OVER · THIS PERIOD</span>
           <span className="ff-body px-2 py-1 rounded-full" style={{ fontSize: 11, color: "#fff", background: "rgba(255,255,255,0.16)" }}>{status}</span>
         </div>
         {cycle && (
           <div className="ff-body" style={{ color: "rgba(255,255,255,0.6)", fontSize: 11, marginTop: 3 }}>
-            Day {cycle.day} of {cycle.cycleDays}{cycle.week ? ` · Week ${cycle.week}` : ""}
+            {cycle.upcoming
+              ? `Next period starts ${fmtDate(cycle.startDate)}`
+              : `Day ${cycle.day} of ${cycle.cycleDays}${cycle.week ? ` · Week ${cycle.week}` : ""}`}
           </div>
         )}
         <div className="ff-num" style={{ color: "#fff", fontSize: "3.4rem", fontWeight: 700, lineHeight: 1.05, marginTop: 6, fontVariantNumeric: "tabular-nums" }}>{fmt(hero)}</div>
@@ -268,7 +298,7 @@ function Dashboard({ state, calc, setScreen, authUser, cloudOn, onOpenSettings }
         </div>
       </Card>
 
-      {cycle && cycle.day > cycle.cycleDays / 2 && !calc.anyActual && (
+      {cycle && !cycle.upcoming && cycle.day > cycle.cycleDays / 2 && !calc.anyActual && (
         <Card className="p-4 mt-3 flex items-center gap-3">
           <Sparkles size={18} color={C.gold} />
           <div className="flex-1" style={{ minWidth: 0 }}>
@@ -335,7 +365,25 @@ function BudgetScreen({ state, setState, calc }) {
 
   const setLine = (g, id, patch) => setState((s) => ({ ...s, groups: { ...s.groups, [g]: { lines: s.groups[g].lines.map((l) => l.id === id ? { ...l, ...patch } : l) } } }));
   const addLine = (g) => setState((s) => ({ ...s, groups: { ...s.groups, [g]: { lines: [...s.groups[g].lines, { id: g[0] + "_" + Date.now(), name: "New item", amount: 0 }] } } }));
-  const delLine = (g, id) => setState((s) => ({ ...s, groups: { ...s.groups, [g]: { lines: s.groups[g].lines.filter((l) => l.id !== id) } } }));
+  // Deleting a line also prunes its logged actuals + locks from the current period,
+  // so spending doesn't silently vanish from category totals into orphaned keys that
+  // pile up in saved state. Confirm first if there's spending logged against it.
+  const delLine = (g, id) => {
+    const loggedThisPeriod = num(state.period.week1[id]) + num(state.period.week2[id]);
+    if (loggedThisPeriod > 0 && !window.confirm("This line has spending logged this period. Delete it and its logged amounts too?")) return;
+    setState((s) => {
+      const drop = (obj) => { if (!obj || !(id in obj)) return obj; const n = { ...obj }; delete n[id]; return n; };
+      return {
+        ...s,
+        groups: { ...s.groups, [g]: { lines: s.groups[g].lines.filter((l) => l.id !== id) } },
+        period: {
+          ...s.period,
+          week1: drop(s.period.week1), week2: drop(s.period.week2),
+          locks: { week1: drop(s.period.locks?.week1), week2: drop(s.period.locks?.week2) },
+        },
+      };
+    });
+  };
 
   // debt payoff estimate — the only place a balance owed (not derivable from
   // income/spending) is entered, right where it's used.
@@ -452,9 +500,11 @@ function TrackScreen({ state, setState, calc, onSavePeriod }) {
     },
   }));
 
+  // Expenses here is the committed figure (plan, raised where you're already over),
+  // so Income − Expenses lines up with the Net bar instead of swinging as you log.
   const barData = [
     { name: "Income", value: calc.incomeThisPeriod, color: C.primary },
-    { name: "Expenses", value: calc.anyActual ? calc.spentSoFar : calc.expenseBudget, color: C.coral },
+    { name: "Expenses", value: calc.committedExpenses, color: C.coral },
     { name: "Net", value: calc.netProfit, color: C.gold },
   ];
 
@@ -491,7 +541,7 @@ function TrackScreen({ state, setState, calc, onSavePeriod }) {
         {state.period.incomeOverrideOn && (
           <div className="flex items-center justify-between pt-2 mt-2" style={{ borderTop: `1px solid ${C.border}` }}>
             <span className="ff-body" style={{ color: C.ink, fontSize: 14 }}>Income received</span>
-            <NumInput value={state.period.incomeOverride} onChange={setIncomeOverride} />
+            <NumInput value={state.period.incomeOverride} onChange={setIncomeOverride} ariaLabel="Actual income received this period" />
           </div>
         )}
       </Card>
@@ -528,7 +578,7 @@ function TrackScreen({ state, setState, calc, onSavePeriod }) {
           {["materials", "labor", "shipping"].map((k) => (
             <div key={k} className="flex items-center justify-between py-1.5">
               <span className="ff-body capitalize" style={{ color: C.ink, fontSize: 14 }}>{k}</span>
-              <NumInput value={state.period.cogs[k]} onChange={(v) => setCogs(k, v)} />
+              <NumInput value={state.period.cogs[k]} onChange={(v) => setCogs(k, v)} ariaLabel={`${k} cost`} />
             </div>
           ))}
         </Card>
@@ -540,6 +590,9 @@ function TrackScreen({ state, setState, calc, onSavePeriod }) {
           <Suspense fallback={<ChartSkeleton />}>
             <CategoryBarChart data={barData} margin={{ top: 6, right: 6, left: -16, bottom: 0 }} />
           </Suspense>
+        </div>
+        <div className="ff-body mt-1 mb-1" style={{ color: C.muted, fontSize: 12 }}>
+          Expenses count your full plan until the period closes — logging less doesn't free it up, since the rest is still coming.
         </div>
         {state.period.cogsOn && <Row k="Gross profit (income − COGS)" v={fmt(calc.grossProfit)} />}
         <Row k="Net profit (income − expenses)" v={fmt(calc.netProfit)} color={calc.netProfit >= 0 ? C.primary : C.coral} />
@@ -562,7 +615,16 @@ function MonthlyScreen({ state, setState, calc }) {
   const paycheckOptions = freq === "weekly" ? [4, 5] : freq === "job" ? [1] : [2, 3];
   const bonusCount = paycheckOptions[paycheckOptions.length - 1];
   const m = state.monthlyPaychecks;
-  const setActual = (g, v) => setState((s) => ({ ...s, monthlyActual: { ...s.monthlyActual, [g]: v } }));
+
+  // Actual spend this calendar month is now DERIVED (per the app's "never type a
+  // number we can derive" rule): saved periods whose pay date lands in this month,
+  // plus what's been logged in the in-flight period. Resets automatically at the
+  // month boundary, replacing the old hand-typed monthlyActual that never reset.
+  const now = new Date();
+  const monthKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
+  const monthActual = monthlyActualsFromHistory(state.history, monthKey);
+  GROUP_KEYS.forEach((g) => { monthActual[g] += calc.groupActual[g]; });
+
   const incomeM = calc.incomeBudget * m;
   const expenseM = calc.expenseBudget * m;
   const leftM = incomeM - expenseM;
@@ -592,7 +654,7 @@ function MonthlyScreen({ state, setState, calc }) {
         </div>
         {GROUP_KEYS.map((g) => {
           const b = calc.groupBudget[g] * m;
-          const a = num(state.monthlyActual[g]);
+          const a = monthActual[g];
           const ou = b - a;
           return (
             <div key={g} className="flex items-center py-1.5" style={{ borderTop: `1px solid ${C.border}` }}>
@@ -601,13 +663,16 @@ function MonthlyScreen({ state, setState, calc }) {
                 <span>{GROUP_META[g].label}</span>
               </span>
               <span className="ff-num" style={{ width: 76, textAlign: "right", color: C.muted, fontSize: 13, flexShrink: 0 }}>{fmt(b)}</span>
-              <span style={{ paddingLeft: 6, flexShrink: 0 }}><NumInput value={a} onChange={(v) => setActual(g, v)} /></span>
+              <span className="ff-num" style={{ width: 96, textAlign: "right", color: C.ink, fontSize: 14, flexShrink: 0 }}>{a === 0 ? "—" : fmt(a)}</span>
               <span className="ff-num" style={{ width: 72, textAlign: "right", color: a === 0 ? C.muted : ou >= 0 ? C.primary : C.coral, fontSize: 13, flexShrink: 0 }}>
                 {a === 0 ? "—" : fmtSigned(ou)}
               </span>
             </div>
           );
         })}
+        <div className="ff-body mt-2" style={{ color: C.muted, fontSize: 12 }}>
+          Actuals are computed from this month's saved periods plus what you've logged in the current one — no need to type them.
+        </div>
       </Card>
 
       <SectionTitle>Monthly summary</SectionTitle>
@@ -652,12 +717,12 @@ function PeriodDraftFields({ draft, setField }) {
 
       <div className="flex items-center justify-between py-1">
         <span className="ff-body" style={{ color: C.ink, fontSize: 14 }}>Income</span>
-        <NumInput value={draft.income} onChange={(v) => setField("income", v)} />
+        <NumInput value={draft.income} onChange={(v) => setField("income", v)} ariaLabel="Income for this period" />
       </div>
       {GROUP_KEYS.map((k) => (
         <div key={k} className="flex items-center justify-between py-1">
           <span className="ff-body" style={{ color: C.ink, fontSize: 14 }}>{GROUP_META[k].label}</span>
-          <NumInput value={draft[k]} onChange={(v) => setField(k, v)} />
+          <NumInput value={draft[k]} onChange={(v) => setField(k, v)} ariaLabel={`${GROUP_META[k].label} total for this period`} />
         </div>
       ))}
 
@@ -680,11 +745,23 @@ function AnnualScreen({ state, calc, setState }) {
   const useTrailingAvg = freq === "job" && recentJobHistory.length > 0;
   const avg = (key) => recentJobHistory.reduce((a, h) => a + h[key], 0) / recentJobHistory.length;
 
-  const baseNet = useTrailingAvg ? avg("netProfit") : calc.netProfit;
+  // Projection basis: a trailing average of real saved periods when we have them
+  // ("by the job"), otherwise the plan (committed expenses) — never the in-flight
+  // period's raw partial actuals, which mid-period would project e.g. one logged
+  // coffee × 26. baseNet is derived as income − expenses so the trailing and plan
+  // paths stay consistent (avg is linear, so this equals avg(netProfit)).
   const baseIncome = useTrailingAvg ? avg("income") : calc.incomeBudget;
-  const baseExp = useTrailingAvg ? avg("totalExpenses") : (calc.anyActual ? calc.spentSoFar : calc.expenseBudget);
+  const baseExp = useTrailingAvg ? avg("totalExpenses") : calc.committedExpenses;
+  const baseNet = baseIncome - baseExp;
+  const savingsPerPeriod = useTrailingAvg ? avg("savings") : calc.groupBudget.savings;
   const annualIncome = baseIncome * periodsPerYear, annualExp = baseExp * periodsPerYear, annualNet = baseNet * periodsPerYear;
-  const extraPerYear = num(state.income.find((i) => i.id === "inc_bonus")?.amount) * periodsPerYear;
+  const annualSavings = savingsPerPeriod * periodsPerYear;
+  // Extra income from the "bonus" paychecks a year — the 26-vs-24 (biweekly) or
+  // 52-vs-48 (weekly) gap between pay periods and calendar months. Derived from the
+  // pay frequency, not read off a hard-coded seed income id that silently returns 0
+  // the moment the user deletes and re-adds their bonus line (new ids are timestamped).
+  const extraChecksPerYear = freq === "weekly" ? 4 : freq === "job" ? 0 : 2;
+  const extraPerYear = calc.incomeBudget * extraChecksPerYear;
 
   const proj = [
     { name: "Income", value: annualIncome, color: C.primary },
@@ -695,9 +772,9 @@ function AnnualScreen({ state, calc, setState }) {
   const milestones = [
     { label: "Projected annual net", value: fmt(annualNet), color: annualNet >= 0 ? C.primary : C.coral },
     { label: "Monthly avg profit", value: fmt(annualNet / 12) },
-    { label: "Weeks to $500 fund", value: baseNet > 0 ? Math.ceil(500 / baseNet * weeksPerPeriod) + " wks" : "—" },
-    { label: "Years to $10k saved", value: annualNet > 0 ? (10000 / annualNet).toFixed(1) + " yrs" : "—" },
-    { label: "Extra money / year", value: fmt(extraPerYear) },
+    { label: "Weeks to $500 fund", value: savingsPerPeriod > 0 ? Math.ceil(500 / savingsPerPeriod * weeksPerPeriod) + " wks" : "—" },
+    { label: "Years to $10k saved", value: annualSavings > 0 ? (10000 / annualSavings).toFixed(1) + " yrs" : "—" },
+    { label: "Bonus pay / year", value: fmt(extraPerYear) },
     { label: "Bonus paycheck value", value: fmt(calc.incomeBudget) },
   ];
 
@@ -708,7 +785,7 @@ function AnnualScreen({ state, calc, setState }) {
     netProfit: h.netProfit,
     savingsRate: h.income ? h.savings / h.income : 0,
   }));
-  const deletePeriod = (id) => setState((s) => ({ ...s, history: s.history.filter((h) => h.id !== id) }));
+  const deletePeriod = (id) => setState((s) => ({ ...s, history: normalizeHistory(s.history.filter((h) => h.id !== id)) }));
 
   // edit an existing saved period in place — recompute its expense/net totals from
   // the edited category values so the same invariants hold as a freshly-saved one
@@ -724,13 +801,14 @@ function AnnualScreen({ state, calc, setState }) {
   const saveEdit = () => {
     setState((s) => ({
       ...s,
-      history: s.history.map((h) => {
+      // Editing a pay date can reorder history, so re-normalize (sort + renumber).
+      history: normalizeHistory(s.history.map((h) => {
         if (h.id !== editingId) return h;
         const c = {};
         GROUP_KEYS.forEach((k) => { c[k] = num(editDraft[k]); });
         const totalExpenses = GROUP_KEYS.reduce((a, k) => a + c[k], 0);
         return { ...h, payDate: editDraft.payDate, income: num(editDraft.income), ...c, totalExpenses, netProfit: num(editDraft.income) - totalExpenses };
-      }),
+      })),
     }));
     cancelEdit();
   };
@@ -745,14 +823,14 @@ function AnnualScreen({ state, calc, setState }) {
   const draftNet = num(draft.income) - draftExpenses;
   const addPeriod = () => {
     setState((s) => {
-      const n = (s.history.length ? Math.max(...s.history.map((h) => h.periodNumber)) : 0) + 1;
       const c = {};
       GROUP_KEYS.forEach((k) => { c[k] = num(draft[k]); });
       const snap = {
-        id: "p_" + Date.now(), periodNumber: n, payDate: draft.payDate,
+        id: "p_" + Date.now(), periodNumber: nextPeriodNumber(s.history), payDate: draft.payDate,
         income: num(draft.income), ...c, totalExpenses: draftExpenses, netProfit: draftNet,
       };
-      return { ...s, history: [...s.history, snap] };
+      // normalizeHistory slots a back-filled past period into date order and renumbers.
+      return { ...s, history: normalizeHistory([...s.history, snap]) };
     });
     setDraft(emptyDraft());
     setAdding(false);
@@ -915,7 +993,17 @@ function downloadFile(filename, content, type) {
 
 function exportJson(state) {
   const stamp = new Date().toISOString().slice(0, 10);
-  downloadFile(`biweekly-budget-backup-${stamp}.json`, JSON.stringify(state, null, 2), "application/json");
+  // Don't write the soft-lock PIN into a file the user might email or drop in cloud
+  // storage — a shared backup shouldn't carry it. They re-set it on import if wanted.
+  const safe = { ...state, settings: { ...state.settings, pin: "" } };
+  downloadFile(`biweekly-budget-backup-${stamp}.json`, JSON.stringify(safe, null, 2), "application/json");
+}
+
+// Wrap a CSV field in quotes (escaping embedded quotes) when it contains a comma,
+// quote, or newline — so a category label like "Food, dining" can't shift columns.
+function csvCell(v) {
+  const s = String(v ?? "");
+  return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
 }
 
 function exportHistoryCsv(state) {
@@ -923,14 +1011,14 @@ function exportHistoryCsv(state) {
   const rows = state.history.map((h) => [
     h.periodNumber, h.payDate, h.income, ...GROUP_KEYS.map((k) => h[k]), h.totalExpenses, h.netProfit,
   ]);
-  const csv = [headers, ...rows].map((r) => r.join(",")).join("\n");
+  const csv = [headers, ...rows].map((r) => r.map(csvCell).join(",")).join("\n");
   const stamp = new Date().toISOString().slice(0, 10);
   downloadFile(`biweekly-budget-history-${stamp}.csv`, csv, "text/csv");
 }
 
 function WelcomeSheet({ name, onClose, onStartTour }) {
   return (
-    <div className="fixed inset-0 flex items-end justify-center" style={{ background: "rgba(20,50,38,0.4)", zIndex: 70 }} onClick={onClose}>
+    <div className="fixed inset-0 flex items-end justify-center" style={{ background: C.overlay, zIndex: 70 }} onClick={onClose}>
       <div className="w-full rounded-t-3xl p-5" style={{ background: C.surface, maxWidth: 480, maxHeight: "90vh", overflowY: "auto" }} onClick={(e) => e.stopPropagation()}>
         <div className="flex justify-center mb-3">
           <span style={{ width: 40, height: 4, borderRadius: 2, background: C.border, display: "block" }} />
@@ -1005,10 +1093,7 @@ function SettingsSheet({ state, setState, onClose, onReset, onSyncNow, syncBusy,
         const parsed = JSON.parse(reader.result);
         if (!parsed || typeof parsed !== "object" || !Array.isArray(parsed.income)) throw new Error("not a backup file");
         if (window.confirm("Import this backup? It will replace all data currently on this device.")) {
-          setState((s) => ({
-            ...DEFAULT_STATE, ...parsed,
-            settings: { ...DEFAULT_STATE.settings, ...(parsed.settings || {}) },
-          }));
+          setState(normalizeState(parsed));
         }
       } catch {
         window.alert("That file doesn't look like a valid backup.");
@@ -1018,7 +1103,7 @@ function SettingsSheet({ state, setState, onClose, onReset, onSyncNow, syncBusy,
   };
 
   return (
-    <div className="fixed inset-0 flex items-end justify-center" style={{ background: "rgba(20,50,38,0.4)", zIndex: 50 }} onClick={onClose}>
+    <div className="fixed inset-0 flex items-end justify-center" style={{ background: C.overlay, zIndex: 50 }} onClick={onClose}>
       <div className="w-full rounded-t-3xl p-5" style={{ background: C.surface, maxWidth: 480, maxHeight: "90vh", overflowY: "auto" }} onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center justify-between mb-3">
           <span className="ff-display" style={{ color: C.ink, fontSize: 18, fontWeight: 600 }}>Settings</span>
@@ -1032,10 +1117,10 @@ function SettingsSheet({ state, setState, onClose, onReset, onSyncNow, syncBusy,
 
         <div data-tour="goal-fields">
           <label className="ff-body block" style={{ color: C.muted, fontSize: 12 }}>Bi-weekly savings goal</label>
-          <div className="mt-1 mb-4"><NumInput value={state.goal} onChange={(v) => setState((s) => ({ ...s, goal: v }))} align="left" /></div>
+          <div className="mt-1 mb-4"><NumInput value={state.goal} onChange={(v) => setState((s) => ({ ...s, goal: v }))} align="left" ariaLabel="Bi-weekly savings goal" /></div>
 
           <label className="ff-body block" style={{ color: C.muted, fontSize: 12 }}>Savings rate goal</label>
-          <div className="mt-1 mb-4"><PercentInput value={state.savingsRateGoal} onChange={(v) => setState((s) => ({ ...s, savingsRateGoal: v }))} /></div>
+          <div className="mt-1 mb-4"><PercentInput value={state.savingsRateGoal} onChange={(v) => setState((s) => ({ ...s, savingsRateGoal: v }))} ariaLabel="Savings rate goal percent" /></div>
         </div>
 
         <label className="ff-body block" style={{ color: C.muted, fontSize: 12 }}>Current period started</label>
@@ -1263,7 +1348,7 @@ export default function App() {
   useEffect(() => {
     (async () => {
       const saved = await loadState();
-      if (saved) setState((d) => ({ ...DEFAULT_STATE, ...saved, settings: { ...DEFAULT_STATE.settings, ...(saved.settings || {}) } }));
+      if (saved) setState(normalizeState(saved));
       setLoaded(true);
     })();
   }, []);
@@ -1307,7 +1392,7 @@ export default function App() {
         if (user.email) setLastEmail(user.email);
         const cloud = await pullCloud();
         if (cloud) {
-          setState((s) => ({ ...DEFAULT_STATE, ...cloud, settings: { ...DEFAULT_STATE.settings, ...(cloud.settings || {}) } }));
+          setState(normalizeState(cloud));
           showToast("Your budget is synced to this account");
         } else {
           await saveState(stateRef.current);
@@ -1334,23 +1419,24 @@ export default function App() {
   const goalTierRef = useRef(null);
   useEffect(() => {
     if (!loaded || num(state.goal) <= 0) return;
-    const tier = calc.goalRatioSavings >= 1 ? 2 : calc.goalRatioSavings >= 0.8 ? 1 : 0;
+    // Notify on REAL saved progress (logged savings), not the committed/planned
+    // figure — otherwise editing the budget up to the goal would fire "goal met".
+    const savedRatio = calc.groupActual.savings / num(state.goal);
+    const tier = savedRatio >= 1 ? 2 : savedRatio >= 0.8 ? 1 : 0;
     if (goalTierRef.current === null) { goalTierRef.current = tier; return; }
     if (tier > goalTierRef.current) {
       showToast(tier === 2 ? "🎉 Goal met — you set aside your full savings goal this period" : "Almost there — you're close to your savings goal");
     }
     goalTierRef.current = tier;
-  }, [loaded, calc.goalRatioSavings, state.goal]);
+  }, [loaded, calc.groupActual.savings, state.goal]);
 
   const savePeriod = useCallback(() => {
     setState((s) => {
-      const n = (s.history.length ? Math.max(...s.history.map((h) => h.periodNumber)) : 0) + 1;
-      const snap = buildPeriodSnapshot(s, n, new Date().toISOString().slice(0, 10));
-      const days = s.payFrequency === "weekly" ? 7 : s.payFrequency === "job" ? 30 : 14;
+      const snap = buildPeriodSnapshot(s, nextPeriodNumber(s.history), new Date().toISOString().slice(0, 10));
       return {
-        ...s, history: [...s.history, snap],
+        ...s, history: normalizeHistory([...s.history, snap]),
         period: emptyPeriod(),
-        periodStart: addDays(s.periodStart, days),
+        periodStart: addDays(s.periodStart, advanceDaysFor(s.payFrequency)),
       };
     });
     showToast("Period saved to your Annual tracker");
@@ -1371,7 +1457,13 @@ export default function App() {
     run();
     const onVis = () => { if (document.visibilityState === "visible") run(); };
     document.addEventListener("visibilitychange", onVis);
-    return () => document.removeEventListener("visibilitychange", onVis);
+    // Also check periodically while the app stays open, so a period that ends with
+    // the tab in the foreground still rolls over without needing a blur/refocus.
+    const timer = setInterval(run, 3600000); // hourly
+    return () => {
+      document.removeEventListener("visibilitychange", onVis);
+      clearInterval(timer);
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [loaded]);
 
@@ -1379,20 +1471,30 @@ export default function App() {
   // cloud row immediately (rather than waiting on the debounced auto-save).
   const saveNow = useCallback(async () => {
     setSaveBusy(true);
-    await saveState(stateRef.current);
+    const { cloudSaved } = await saveState(stateRef.current);
     setSaveBusy(false);
-    showToast(supabaseConfigured() && authUser ? "Saved to your account" : "Saved on this device");
+    const wantsCloud = supabaseConfigured() && authUser;
+    showToast(wantsCloud
+      ? (cloudSaved ? "Saved to your account" : "Saved on this device — couldn't reach the cloud")
+      : "Saved on this device");
   }, [authUser]);
 
   const syncNow = useCallback(async () => {
     setSyncBusy(true);
     const cloud = await pullCloud();
-    if (cloud) {
-      setState((s) => ({ ...DEFAULT_STATE, ...cloud, settings: { ...DEFAULT_STATE.settings, ...(cloud.settings || {}) } }));
+    // Only adopt the cloud copy when it's genuinely newer than what this device
+    // last saved; otherwise a stale cloud row (e.g. edits made here while offline
+    // that never reached it) would overwrite newer local data. When local is
+    // newer, push it up instead so both ends converge on the latest.
+    const cloudNewer = cloud && (cloud._updatedAt || 0) > localUpdatedAt();
+    if (cloudNewer) {
+      setState(normalizeState(cloud));
       showToast("Pulled the latest from the cloud");
     } else {
-      await saveState(state);
-      showToast("Saved this device to the cloud");
+      const { cloudSaved } = await saveState(state);
+      showToast(cloudSaved
+        ? (cloud ? "This device had the latest — saved it up" : "Saved this device to the cloud")
+        : "Couldn't reach the cloud — saved on this device");
     }
     setSyncBusy(false);
   }, [state]);
@@ -1443,11 +1545,16 @@ export default function App() {
   }, []);
 
   const handleSignOut = useCallback(async () => {
-    // flush the latest to this account's cloud while still signed in, then wipe
-    // the device so the next account to sign in restores its own data cleanly
-    await saveState(stateRef.current);
+    // Flush the latest to this account's cloud while still signed in. Only wipe the
+    // device once that write has actually landed — otherwise an offline sign-out
+    // would clearLocal() away the sole copy and restore a stale budget next login.
+    const { cloudSaved } = await saveState(stateRef.current);
+    if (!cloudSaved && !window.confirm(
+      "Couldn't save your latest changes to the cloud — you may be offline. " +
+      "Sign out anyway? Your changes stay saved on this device."
+    )) return;
+    if (cloudSaved) clearLocal(); // cloud has the latest; next account starts clean
     await signOut();
-    clearLocal();
     window.location.reload();
   }, []);
 
