@@ -12,7 +12,7 @@ import { DEFAULT_STATE, normalizeState } from "./lib/defaults.js";
 import { num, fmt, fmtSigned, pct, fmtDate, cyclePosition } from "./lib/format.js";
 import { useCalc, spendStatusKey } from "./lib/calc.js";
 import { cycleDaysFor, advanceDaysFor, nextPeriodNumber, normalizeHistory, monthlyActualsFromHistory, emptyPeriod, buildPeriodSnapshot, addDays, autoRollover } from "./lib/period.js";
-import { useReducedMotion, useCountUp } from "./lib/hooks.js";
+import { useReducedMotion, useCountUp, useIsDesktop } from "./lib/hooks.js";
 import { loadState, saveState, pullCloud, clearLocal, getLastEmail, setLastEmail, localUpdatedAt } from "./lib/storage.js";
 import { supabaseConfigured, signInWithEmail, signInWithPassword, signUpWithPassword, updatePassword, signOut, getUser, onAuthChange } from "./lib/supabase.js";
 
@@ -201,7 +201,7 @@ function TrackRow({ name, value, onChange, total, budget, locked, onToggleLock }
   );
 }
 
-function GoalCard({ state, calc }) {
+function GoalCard({ state, calc, className = "p-4 mt-3" }) {
   const goal = num(state.goal);
   const rateGoal = num(state.savingsRateGoal);
   const saved = calc.savedThisPeriod;
@@ -221,7 +221,7 @@ function GoalCard({ state, calc }) {
   const anyOnTrack = data.some((d) => d.onTrack);
 
   return (
-    <Card data-tour="goalcard" className="p-4 mt-3">
+    <Card data-tour="goalcard" className={className}>
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2">
           <Target size={18} color={C.primary} />
@@ -247,7 +247,7 @@ function GoalCard({ state, calc }) {
 }
 
 /* ============================== screens ============================== */
-function Dashboard({ state, calc, setScreen, authUser, cloudOn, onOpenSettings }) {
+function Dashboard({ state, calc, setScreen, authUser, cloudOn, onOpenSettings, isDesktop }) {
   const reduced = useReducedMotion();
   const hero = useCountUp(calc.leftOverBudget, reduced);
   const cycle = cyclePosition(state.periodStart, cycleDaysFor(state.payFrequency));
@@ -270,95 +270,135 @@ function Dashboard({ state, calc, setScreen, authUser, cloudOn, onOpenSettings }
     .filter((d) => d.value > 0);
   const leftToSpend = calc.expenseBudget - calc.spentSoFar;
 
+  // The cards are built once as pieces, then arranged two ways: a vertical stack on
+  // mobile (unchanged), a multi-column grid on desktop. Margins are applied by the
+  // arrangement, not baked into the pieces.
+  const heroCard = (
+    <Card data-tour="hero" className="p-5" style={{ background: C.heroGradient, border: "none" }}>
+      <div className="flex items-center justify-between">
+        <span className="ff-body" style={{ color: "rgba(255,255,255,0.72)", fontSize: 12, letterSpacing: 0.4 }}>MONEY LEFT OVER · THIS PERIOD</span>
+        <span className="ff-body px-2 py-1 rounded-full" style={{ fontSize: 11, color: "#fff", background: "rgba(255,255,255,0.16)" }}>{status}</span>
+      </div>
+      {cycle && (
+        <div className="ff-body" style={{ color: "rgba(255,255,255,0.6)", fontSize: 11, marginTop: 3 }}>
+          {cycle.upcoming
+            ? `Next period starts ${fmtDate(cycle.startDate)}`
+            : `Day ${cycle.day} of ${cycle.cycleDays}${cycle.week ? ` · Week ${cycle.week}` : ""}`}
+        </div>
+      )}
+      <div className="ff-num" style={{ color: "#fff", fontSize: "3.4rem", fontWeight: 700, lineHeight: 1.05, marginTop: 6, fontVariantNumeric: "tabular-nums" }}>{fmt(hero)}</div>
+      <div className="ff-body" style={{ color: "rgba(255,255,255,0.8)", fontSize: 13, marginTop: 2 }}>
+        {calc.leftOverBudget >= 0 ? "after every bill and your savings" : "your plan spends more than you make"}
+      </div>
+      <div className="mt-4 rounded-full overflow-hidden" style={{ height: 10, background: "rgba(255,255,255,0.18)" }}>
+        <div style={{ width: (ratio / 1.35 * 100) + "%", height: "100%", background: gaugeColor, borderRadius: 999, transition: reduced ? "none" : "width 0.6s ease" }} />
+      </div>
+      <div className="flex justify-between mt-2 ff-body" style={{ color: "rgba(255,255,255,0.82)", fontSize: 12 }}>
+        <span>{calc.anyActual ? fmt(calc.spentSoFar) + " spent" : "Nothing logged yet"}</span>
+        <span>{fmt(leftToSpend)} left to spend</span>
+      </div>
+    </Card>
+  );
+
+  const halfwayCard = (cycle && !cycle.upcoming && cycle.day > cycle.cycleDays / 2 && !calc.anyActual) ? (
+    <Card className="p-4 flex items-center gap-3">
+      <Sparkles size={18} color={C.gold} />
+      <div className="flex-1" style={{ minWidth: 0 }}>
+        <div className="ff-body" style={{ color: C.ink, fontSize: 13, fontWeight: 600 }}>You're halfway through this period</div>
+        <div className="ff-body mt-0.5" style={{ color: C.muted, fontSize: 12 }}>Nothing logged yet — jot down what you've spent so far.</div>
+      </div>
+      <button onClick={() => setScreen("track")} className="rounded-xl px-3 py-2" style={{ background: C.primary, color: "#fff", flexShrink: 0 }}>
+        <span className="ff-body" style={{ fontWeight: 600, fontSize: 13 }}>Log it</span>
+      </button>
+    </Card>
+  ) : null;
+
+  const mascotCard = (state.settings.theme !== "classic" && state.settings.themeFx) ? (
+    <Card className="p-3 flex items-center gap-3">
+      <ThemeMascotPanel theme={state.settings.theme} mood={mood} enabled={state.settings.themeFx} />
+      <span className="ff-body" style={{ color: C.ink, fontSize: 13 }}>{moodCaption}</span>
+    </Card>
+  ) : null;
+
+  const statsRow = (
+    <div data-tour="stats" className="flex gap-3">
+      <StatTile label="Income" value={fmt(calc.incomeBudget)} sub="per period" />
+      <StatTile label="Expenses" value={fmt(calc.expenseBudget)} sub="incl. savings" />
+      <StatTile label="Savings rate" value={pct(calc.savingsRateBudget)} sub="of income"
+        color={calc.savingsRateBudget >= num(state.savingsRateGoal) ? C.primary : C.coral} />
+    </div>
+  );
+
+  const quickActions = (
+    <div data-tour="quickactions" className="flex gap-3">
+      <button onClick={() => setScreen("track")} className="flex-1 flex items-center justify-center gap-2 rounded-2xl py-3" style={{ background: C.primary, color: "#fff" }}>
+        <PlusCircle size={18} /> <span className="ff-body" style={{ fontWeight: 600, fontSize: 14 }}>Log spending</span>
+      </button>
+      <button onClick={() => setScreen("budget")} className="flex-1 flex items-center justify-center gap-2 rounded-2xl py-3" style={{ background: C.surface, color: C.ink, border: `1px solid ${C.border}` }}>
+        <Wallet size={18} /> <span className="ff-body" style={{ fontWeight: 600, fontSize: 14 }}>Edit budget</span>
+      </button>
+    </div>
+  );
+
+  const donutCard = (
+    <Card data-tour="donut" className="p-4">
+      {isDesktop && <div className="ff-display mb-2" style={{ color: C.ink, fontSize: 15, fontWeight: 600 }}>Where it goes</div>}
+      <div style={{ height: 200, position: "relative" }}>
+        <Suspense fallback={<ChartSkeleton />}>
+          <SpendDonutChart data={donutData} />
+        </Suspense>
+        <ChartCat mood={mood} enabled={state.settings.themeFx && state.settings.theme === "pixelkitty"} />
+      </div>
+      <div className="flex flex-wrap gap-x-4 gap-y-1 mt-2 px-1">
+        {donutData.map((d, i) => (
+          <div key={i} className="flex items-center gap-1.5">
+            <span style={{ width: 9, height: 9, borderRadius: 3, background: d.color, display: "inline-block" }} />
+            <span className="ff-body" style={{ color: C.inkSoft, fontSize: 12 }}>{d.name}</span>
+            <span className="ff-num" style={{ color: C.muted, fontSize: 12 }}>{fmt(d.value)}</span>
+          </div>
+        ))}
+      </div>
+    </Card>
+  );
+
+  // Desktop: a 2×2 dashboard grid — hero + stats/actions on top, donut + goal below.
+  if (isDesktop) {
+    return (
+      <div className="pb-2">
+        <div style={{ display: "grid", gridTemplateColumns: "1.25fr 1fr", gap: 16, alignItems: "start" }}>
+          {heroCard}
+          <div className="flex flex-col gap-3">
+            {statsRow}
+            {quickActions}
+            {mascotCard}
+          </div>
+        </div>
+        {halfwayCard && <div className="mt-4">{halfwayCard}</div>}
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, alignItems: "start", marginTop: 20 }}>
+          {donutCard}
+          <GoalCard state={state} calc={calc} className="p-4" />
+        </div>
+      </div>
+    );
+  }
+
+  // Mobile: the original single-column stack, unchanged.
   return (
     <div className="px-4 pb-2">
       <AccountBanner authUser={authUser} cloudOn={cloudOn} onManage={onOpenSettings} />
-      <Card data-tour="hero" className="p-5 mt-3" style={{ background: C.heroGradient, border: "none" }}>
-        <div className="flex items-center justify-between">
-          <span className="ff-body" style={{ color: "rgba(255,255,255,0.72)", fontSize: 12, letterSpacing: 0.4 }}>MONEY LEFT OVER · THIS PERIOD</span>
-          <span className="ff-body px-2 py-1 rounded-full" style={{ fontSize: 11, color: "#fff", background: "rgba(255,255,255,0.16)" }}>{status}</span>
-        </div>
-        {cycle && (
-          <div className="ff-body" style={{ color: "rgba(255,255,255,0.6)", fontSize: 11, marginTop: 3 }}>
-            {cycle.upcoming
-              ? `Next period starts ${fmtDate(cycle.startDate)}`
-              : `Day ${cycle.day} of ${cycle.cycleDays}${cycle.week ? ` · Week ${cycle.week}` : ""}`}
-          </div>
-        )}
-        <div className="ff-num" style={{ color: "#fff", fontSize: "3.4rem", fontWeight: 700, lineHeight: 1.05, marginTop: 6, fontVariantNumeric: "tabular-nums" }}>{fmt(hero)}</div>
-        <div className="ff-body" style={{ color: "rgba(255,255,255,0.8)", fontSize: 13, marginTop: 2 }}>
-          {calc.leftOverBudget >= 0 ? "after every bill and your savings" : "your plan spends more than you make"}
-        </div>
-        <div className="mt-4 rounded-full overflow-hidden" style={{ height: 10, background: "rgba(255,255,255,0.18)" }}>
-          <div style={{ width: (ratio / 1.35 * 100) + "%", height: "100%", background: gaugeColor, borderRadius: 999, transition: reduced ? "none" : "width 0.6s ease" }} />
-        </div>
-        <div className="flex justify-between mt-2 ff-body" style={{ color: "rgba(255,255,255,0.82)", fontSize: 12 }}>
-          <span>{calc.anyActual ? fmt(calc.spentSoFar) + " spent" : "Nothing logged yet"}</span>
-          <span>{fmt(leftToSpend)} left to spend</span>
-        </div>
-      </Card>
-
-      {cycle && !cycle.upcoming && cycle.day > cycle.cycleDays / 2 && !calc.anyActual && (
-        <Card className="p-4 mt-3 flex items-center gap-3">
-          <Sparkles size={18} color={C.gold} />
-          <div className="flex-1" style={{ minWidth: 0 }}>
-            <div className="ff-body" style={{ color: C.ink, fontSize: 13, fontWeight: 600 }}>You're halfway through this period</div>
-            <div className="ff-body mt-0.5" style={{ color: C.muted, fontSize: 12 }}>Nothing logged yet — jot down what you've spent so far.</div>
-          </div>
-          <button onClick={() => setScreen("track")} className="rounded-xl px-3 py-2" style={{ background: C.primary, color: "#fff", flexShrink: 0 }}>
-            <span className="ff-body" style={{ fontWeight: 600, fontSize: 13 }}>Log it</span>
-          </button>
-        </Card>
-      )}
-
-      {state.settings.theme !== "classic" && state.settings.themeFx && (
-        <Card className="p-3 mt-3 flex items-center gap-3">
-          <ThemeMascotPanel theme={state.settings.theme} mood={mood} enabled={state.settings.themeFx} />
-          <span className="ff-body" style={{ color: C.ink, fontSize: 13 }}>{moodCaption}</span>
-        </Card>
-      )}
-
-      <div data-tour="stats" className="flex gap-3 mt-3">
-        <StatTile label="Income" value={fmt(calc.incomeBudget)} sub="per period" />
-        <StatTile label="Expenses" value={fmt(calc.expenseBudget)} sub="incl. savings" />
-        <StatTile label="Savings rate" value={pct(calc.savingsRateBudget)} sub="of income"
-          color={calc.savingsRateBudget >= num(state.savingsRateGoal) ? C.primary : C.coral} />
-      </div>
-
-      <div data-tour="quickactions" className="flex gap-3 mt-3">
-        <button onClick={() => setScreen("track")} className="flex-1 flex items-center justify-center gap-2 rounded-2xl py-3" style={{ background: C.primary, color: "#fff" }}>
-          <PlusCircle size={18} /> <span className="ff-body" style={{ fontWeight: 600, fontSize: 14 }}>Log spending</span>
-        </button>
-        <button onClick={() => setScreen("budget")} className="flex-1 flex items-center justify-center gap-2 rounded-2xl py-3" style={{ background: C.surface, color: C.ink, border: `1px solid ${C.border}` }}>
-          <Wallet size={18} /> <span className="ff-body" style={{ fontWeight: 600, fontSize: 14 }}>Edit budget</span>
-        </button>
-      </div>
-
+      <div className="mt-3">{heroCard}</div>
+      {halfwayCard && <div className="mt-3">{halfwayCard}</div>}
+      {mascotCard && <div className="mt-3">{mascotCard}</div>}
+      <div className="mt-3">{statsRow}</div>
+      <div className="mt-3">{quickActions}</div>
       <SectionTitle>Where it goes</SectionTitle>
-      <Card data-tour="donut" className="p-4">
-        <div style={{ height: 200, position: "relative" }}>
-          <Suspense fallback={<ChartSkeleton />}>
-            <SpendDonutChart data={donutData} />
-          </Suspense>
-          <ChartCat mood={mood} enabled={state.settings.themeFx && state.settings.theme === "pixelkitty"} />
-        </div>
-        <div className="flex flex-wrap gap-x-4 gap-y-1 mt-2 px-1">
-          {donutData.map((d, i) => (
-            <div key={i} className="flex items-center gap-1.5">
-              <span style={{ width: 9, height: 9, borderRadius: 3, background: d.color, display: "inline-block" }} />
-              <span className="ff-body" style={{ color: C.inkSoft, fontSize: 12 }}>{d.name}</span>
-              <span className="ff-num" style={{ color: C.muted, fontSize: 12 }}>{fmt(d.value)}</span>
-            </div>
-          ))}
-        </div>
-      </Card>
-
+      {donutCard}
       <GoalCard state={state} calc={calc} />
     </div>
   );
 }
 
-function BudgetScreen({ state, setState, calc }) {
+function BudgetScreen({ state, setState, calc, isDesktop }) {
   const setIncome = (id, patch) => setState((s) => ({ ...s, income: s.income.map((l) => l.id === id ? { ...l, ...patch } : l) }));
   const addIncome = () => setState((s) => ({ ...s, income: [...s.income, { id: "inc_" + Date.now(), name: "New income", amount: 0 }] }));
   const delIncome = (id) => setState((s) => ({ ...s, income: s.income.filter((l) => l.id !== id) }));
@@ -396,7 +436,7 @@ function BudgetScreen({ state, setState, calc }) {
   })();
 
   return (
-    <div className="px-4 pb-2">
+    <div className={isDesktop ? "pb-2" : "px-4 pb-2"}>
       <div className="ff-body mt-3 px-1" style={{ color: C.muted, fontSize: 13 }}>
         Set what you make and what you plan to spend each pay period. Everything else in the app calculates from here.
       </div>
@@ -413,6 +453,8 @@ function BudgetScreen({ state, setState, calc }) {
         </div>
       </Card>
 
+      {/* desktop: the six categories flow in two columns to use the width */}
+      <div style={isDesktop ? { display: "grid", gridTemplateColumns: "1fr 1fr", columnGap: 20, alignItems: "start" } : undefined}>
       {GROUP_KEYS.map((g) => (
         <div key={g}>
           <SectionTitle right={<button onClick={() => addLine(g)} style={{ color: C.primary }}><Plus size={18} /></button>}>
@@ -460,6 +502,7 @@ function BudgetScreen({ state, setState, calc }) {
           )}
         </div>
       ))}
+      </div>
 
       <SectionTitle>Per-period summary</SectionTitle>
       <Card className="p-4">
@@ -474,7 +517,7 @@ function BudgetScreen({ state, setState, calc }) {
   );
 }
 
-function TrackScreen({ state, setState, calc, onSavePeriod }) {
+function TrackScreen({ state, setState, calc, onSavePeriod, isDesktop }) {
   const showWeeks = (state.payFrequency || "biweekly") === "biweekly";
   const [weekTab, setWeekTab] = useState("week1");
   const week = showWeeks ? weekTab : "week1"; // weekly/job frequencies just use one bucket
@@ -509,7 +552,7 @@ function TrackScreen({ state, setState, calc, onSavePeriod }) {
   ];
 
   return (
-    <div className="px-4 pb-2">
+    <div className={isDesktop ? "pb-2" : "px-4 pb-2"}>
       {showWeeks && (
         <div className="flex gap-1 p-1 rounded-2xl mt-3" style={{ background: C.surface, border: `1px solid ${C.border}` }}>
           {["week1", "week2"].map((w) => (
@@ -546,6 +589,8 @@ function TrackScreen({ state, setState, calc, onSavePeriod }) {
         )}
       </Card>
 
+      {/* desktop: log categories in two columns */}
+      <div style={isDesktop ? { display: "grid", gridTemplateColumns: "1fr 1fr", columnGap: 20, alignItems: "start" } : undefined}>
       {GROUP_KEYS.map((g) => (
         <div key={g}>
           <SectionTitle>
@@ -566,6 +611,7 @@ function TrackScreen({ state, setState, calc, onSavePeriod }) {
           </Card>
         </div>
       ))}
+      </div>
 
       <div className="mt-4 px-1">
         <label className="flex items-center gap-2 ff-body" style={{ color: C.muted, fontSize: 13 }}>
@@ -610,7 +656,7 @@ function TrackScreen({ state, setState, calc, onSavePeriod }) {
   );
 }
 
-function MonthlyScreen({ state, setState, calc }) {
+function MonthlyScreen({ state, setState, calc, isDesktop }) {
   const freq = state.payFrequency || "biweekly";
   const paycheckOptions = freq === "weekly" ? [4, 5] : freq === "job" ? [1] : [2, 3];
   const bonusCount = paycheckOptions[paycheckOptions.length - 1];
@@ -631,19 +677,19 @@ function MonthlyScreen({ state, setState, calc }) {
   const savingsM = calc.groupBudget.savings * m;
   const extra = calc.incomeBudget;
 
-  return (
-    <div className="px-4 pb-2">
-      {paycheckOptions.length > 1 && (
-        <div data-tour="paycheck-toggle" className="flex gap-1 p-1 rounded-2xl mt-3" style={{ background: C.surface, border: `1px solid ${C.border}` }}>
-          {paycheckOptions.map((n) => (
-            <button key={n} onClick={() => setState((s) => ({ ...s, monthlyPaychecks: n }))} className="flex-1 rounded-xl py-2 ff-body"
-              style={{ background: m === n ? C.primary : "transparent", color: m === n ? "#fff" : C.muted, fontWeight: 600, fontSize: 13 }}>
-              {n === bonusCount ? `Bonus month (${n} paychecks)` : `Normal month (${n} paychecks)`}
-            </button>
-          ))}
-        </div>
-      )}
+  const toggle = paycheckOptions.length > 1 ? (
+    <div data-tour="paycheck-toggle" className="flex gap-1 p-1 rounded-2xl mt-3" style={{ background: C.surface, border: `1px solid ${C.border}` }}>
+      {paycheckOptions.map((n) => (
+        <button key={n} onClick={() => setState((s) => ({ ...s, monthlyPaychecks: n }))} className="flex-1 rounded-xl py-2 ff-body"
+          style={{ background: m === n ? C.primary : "transparent", color: m === n ? "#fff" : C.muted, fontWeight: 600, fontSize: 13 }}>
+          {n === bonusCount ? `Bonus month (${n} paychecks)` : `Normal month (${n} paychecks)`}
+        </button>
+      ))}
+    </div>
+  ) : null;
 
+  const tableSection = (
+    <>
       <SectionTitle>Budget vs actual</SectionTitle>
       <Card data-tour="budget-vs-actual" className="px-4 py-3">
         <div className="flex ff-body pb-2" style={{ color: C.muted, fontSize: 11, textTransform: "uppercase", letterSpacing: 0.3 }}>
@@ -674,7 +720,11 @@ function MonthlyScreen({ state, setState, calc }) {
           Actuals are computed from this month's saved periods plus what you've logged in the current one — no need to type them.
         </div>
       </Card>
+    </>
+  );
 
+  const summarySection = (
+    <>
       <SectionTitle>Monthly summary</SectionTitle>
       <Card className="p-4">
         <Row k="Income (budgeted)" v={fmt(incomeM)} />
@@ -683,22 +733,44 @@ function MonthlyScreen({ state, setState, calc }) {
         <Row k="Savings this month" v={fmt(savingsM)} color={C.primary} />
         <Row k="Savings rate" v={pct(incomeM ? savingsM / incomeM : 0)} />
       </Card>
+    </>
+  );
 
-      {paycheckOptions.length > 1 && m === bonusCount && (
-        <>
-          <SectionTitle>Your bonus paycheck</SectionTitle>
-          <Card className="p-4" style={{ background: C.surfaceWarm }}>
-            <div className="flex items-center gap-2">
-              <Sparkles size={18} color={C.gold} />
-              <span className="ff-display" style={{ color: C.ink, fontWeight: 600, fontSize: 15 }}>{fmt(extra)} extra this month</span>
-            </div>
-            <div className="ff-body mt-1 mb-3" style={{ color: C.muted, fontSize: 13 }}>A {bonusCount}-paycheck month gives you one full extra paycheck. Suggested split:</div>
-            <Row k="50% → extra debt payment" v={fmt(extra * 0.5)} color={C.coral} />
-            <Row k="30% → savings" v={fmt(extra * 0.3)} color={C.primary} />
-            <Row k="20% → fun money" v={fmt(extra * 0.2)} color={C.gold} />
-          </Card>
-        </>
-      )}
+  const bonusSection = (paycheckOptions.length > 1 && m === bonusCount) ? (
+    <>
+      <SectionTitle>Your bonus paycheck</SectionTitle>
+      <Card className="p-4" style={{ background: C.surfaceWarm }}>
+        <div className="flex items-center gap-2">
+          <Sparkles size={18} color={C.gold} />
+          <span className="ff-display" style={{ color: C.ink, fontWeight: 600, fontSize: 15 }}>{fmt(extra)} extra this month</span>
+        </div>
+        <div className="ff-body mt-1 mb-3" style={{ color: C.muted, fontSize: 13 }}>A {bonusCount}-paycheck month gives you one full extra paycheck. Suggested split:</div>
+        <Row k="50% → extra debt payment" v={fmt(extra * 0.5)} color={C.coral} />
+        <Row k="30% → savings" v={fmt(extra * 0.3)} color={C.primary} />
+        <Row k="20% → fun money" v={fmt(extra * 0.2)} color={C.gold} />
+      </Card>
+    </>
+  ) : null;
+
+  // Desktop: the budget-vs-actual table sits beside the monthly summary + bonus card.
+  if (isDesktop) {
+    return (
+      <div className="pb-2">
+        {toggle}
+        <div style={{ display: "grid", gridTemplateColumns: "1.3fr 1fr", gap: 20, alignItems: "start" }}>
+          <div>{tableSection}</div>
+          <div>{summarySection}{bonusSection}</div>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="px-4 pb-2">
+      {toggle}
+      {tableSection}
+      {summarySection}
+      {bonusSection}
     </div>
   );
 }
@@ -734,7 +806,7 @@ function PeriodDraftFields({ draft, setField }) {
   );
 }
 
-function AnnualScreen({ state, calc, setState }) {
+function AnnualScreen({ state, calc, setState, isDesktop }) {
   const freq = state.payFrequency || "biweekly";
   const periodsPerYear = freq === "weekly" ? 52 : freq === "job" ? 12 : 26;
   const weeksPerPeriod = freq === "weekly" ? 1 : freq === "job" ? 52 / 12 : 2;
@@ -836,8 +908,8 @@ function AnnualScreen({ state, calc, setState }) {
     setAdding(false);
   };
 
-  return (
-    <div className="px-4 pb-2">
+  const projectionSection = (
+    <>
       <SectionTitle>Annual projection</SectionTitle>
       <div className="ff-body px-1 mb-2" style={{ color: C.muted, fontSize: 12 }}>
         {useTrailingAvg
@@ -853,23 +925,27 @@ function AnnualScreen({ state, calc, setState }) {
           </Suspense>
         </div>
       </Card>
+    </>
+  );
 
-      {trendData.length >= 2 && (
-        <>
-          <SectionTitle>Your trend</SectionTitle>
-          <Card data-tour="trends" className="p-4">
-            <div style={{ height: 180 }}>
-              <Suspense fallback={<ChartSkeleton />}>
-                <TrendChart data={trendData} />
-              </Suspense>
-            </div>
-            <div className="ff-body mt-1" style={{ color: C.muted, fontSize: 12 }}>
-              Net profit and savings rate over your last {trendData.length} saved periods.
-            </div>
-          </Card>
-        </>
-      )}
+  const trendSection = trendData.length >= 2 ? (
+    <>
+      <SectionTitle>Your trend</SectionTitle>
+      <Card data-tour="trends" className="p-4">
+        <div style={{ height: 180 }}>
+          <Suspense fallback={<ChartSkeleton />}>
+            <TrendChart data={trendData} />
+          </Suspense>
+        </div>
+        <div className="ff-body mt-1" style={{ color: C.muted, fontSize: 12 }}>
+          Net profit and savings rate over your last {trendData.length} saved periods.
+        </div>
+      </Card>
+    </>
+  ) : null;
 
+  const milestonesSection = (
+    <>
       <SectionTitle>Milestones</SectionTitle>
       <div data-tour="milestones" className="grid grid-cols-2 gap-3">
         {milestones.map((mi, i) => (
@@ -879,7 +955,11 @@ function AnnualScreen({ state, calc, setState }) {
           </Card>
         ))}
       </div>
+    </>
+  );
 
+  const historySection = (
+    <>
       <div data-tour="history">
         <SectionTitle right={<button onClick={() => setAdding((a) => !a)} style={{ color: C.primary }}><Plus size={18} /></button>}>Pay period history</SectionTitle>
       </div>
@@ -943,6 +1023,27 @@ function AnnualScreen({ state, calc, setState }) {
           </div>
         </Card>
       )}
+    </>
+  );
+
+  // Desktop: charts + milestones on the left, the pay-period history on the right.
+  if (isDesktop) {
+    return (
+      <div className="pb-2">
+        <div style={{ display: "grid", gridTemplateColumns: "1.05fr 1fr", gap: 24, alignItems: "start" }}>
+          <div>{projectionSection}{trendSection}{milestonesSection}</div>
+          <div>{historySection}</div>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="px-4 pb-2">
+      {projectionSection}
+      {trendSection}
+      {milestonesSection}
+      {historySection}
     </div>
   );
 }
@@ -1330,6 +1431,62 @@ const SCREENS = [
   { id: "annual", label: "Annual", icon: TrendingUp },
 ];
 
+/* ===== desktop shell (≥1024px): left sidebar rail + wide multi-column content =====
+   Shares every screen component and all state with the mobile shell — only the
+   chrome differs. Save + Settings keep their data-tour anchors so the Tour still
+   finds them here. */
+function Sidebar({ name, screen, setScreen, onSave, saveBusy, onOpenSettings, authUser, cloudOn }) {
+  return (
+    <aside style={{ width: 248, flexShrink: 0, height: "100vh", position: "sticky", top: 0, background: C.surface, borderRight: `1px solid ${C.border}`, display: "flex", flexDirection: "column", padding: "22px 14px" }}>
+      <div className="px-2 mb-5">
+        <div className="ff-display" style={{ color: C.ink, fontSize: 19, fontWeight: 700, lineHeight: 1.15 }}>Bi-Weekly Budget</div>
+        <div className="ff-body" style={{ color: C.muted, fontSize: 13, marginTop: 2 }}>{name ? `Hi, ${name}` : "Your money"}</div>
+      </div>
+      <nav className="flex flex-col gap-1">
+        {SCREENS.map((s) => {
+          const I = s.icon, active = screen === s.id;
+          return (
+            <button key={s.id} onClick={() => setScreen(s.id)}
+              className="flex items-center gap-3 rounded-xl px-3 py-2.5 ff-body text-left"
+              style={{ background: active ? C.primary : "transparent", color: active ? "#fff" : C.inkSoft, fontWeight: active ? 600 : 500, fontSize: 14.5 }}>
+              <I size={19} color={active ? "#fff" : C.muted} strokeWidth={active ? 2.4 : 2} style={{ flexShrink: 0 }} />
+              {s.label}
+            </button>
+          );
+        })}
+      </nav>
+      <div className="mt-auto flex flex-col gap-2 pt-4">
+        {cloudOn && <AccountBanner authUser={authUser} cloudOn={cloudOn} onManage={onOpenSettings} />}
+        <div className="flex gap-2">
+          <button data-tour="save-button" onClick={onSave} disabled={saveBusy}
+            className="flex-1 flex items-center justify-center gap-1.5 rounded-xl py-2.5" style={{ background: C.primary, color: "#fff", opacity: saveBusy ? 0.6 : 1 }}>
+            <Save size={15} /> <span className="ff-body" style={{ fontWeight: 600, fontSize: 13 }}>{saveBusy ? "Saving…" : "Save"}</span>
+          </button>
+          <button data-tour="settings-gear" onClick={onOpenSettings} aria-label="Settings"
+            className="rounded-xl p-2.5" style={{ background: C.bg, border: `1px solid ${C.border}`, color: C.inkSoft }}>
+            <Settings size={18} />
+          </button>
+        </div>
+      </div>
+    </aside>
+  );
+}
+
+function DesktopShell({ title, name, screen, setScreen, onSave, saveBusy, onOpenSettings, authUser, cloudOn, children }) {
+  return (
+    <div className="app-root" style={{ minHeight: "100vh", display: "flex", alignItems: "flex-start" }}>
+      <Sidebar name={name} screen={screen} setScreen={setScreen} onSave={onSave} saveBusy={saveBusy}
+        onOpenSettings={onOpenSettings} authUser={authUser} cloudOn={cloudOn} />
+      <main className="flex-1" style={{ minWidth: 0 }}>
+        <div style={{ maxWidth: 1180, margin: "0 auto", padding: "28px 32px 72px" }}>
+          <h1 className="ff-display" style={{ color: C.ink, fontSize: 26, fontWeight: 700, marginBottom: 18 }}>{title}</h1>
+          {children}
+        </div>
+      </main>
+    </div>
+  );
+}
+
 export default function App() {
   const [state, setState] = useState(DEFAULT_STATE);
   const [loaded, setLoaded] = useState(false);
@@ -1412,6 +1569,7 @@ export default function App() {
   }, [state.settings.darkMode, state.settings.theme]);
 
   const calc = useCalc(state);
+  const isDesktop = useIsDesktop(); // ≥1024px → sidebar + multi-column shell; below → mobile shell
 
   const showToast = (msg) => { setToast(msg); setTimeout(() => setToast(""), 2400); };
 
@@ -1572,6 +1730,64 @@ export default function App() {
 
   const title = { home: state.settings.name ? `Hi, ${state.settings.name}` : "Your money", budget: "Budget", track: "Track spending", monthly: "Monthly", annual: "Annual" }[screen];
 
+  // One place the active screen is chosen, shared by both shells; isDesktop lets
+  // each screen switch to a multi-column layout on wide viewports.
+  const renderScreen = () => {
+    switch (screen) {
+      case "home": return <Dashboard state={state} calc={calc} setScreen={setScreen} authUser={authUser} cloudOn={supabaseConfigured()} onOpenSettings={() => setShowSettings(true)} isDesktop={isDesktop} />;
+      case "budget": return <BudgetScreen state={state} setState={setState} calc={calc} isDesktop={isDesktop} />;
+      case "track": return <TrackScreen state={state} setState={setState} calc={calc} onSavePeriod={savePeriod} isDesktop={isDesktop} />;
+      case "monthly": return <MonthlyScreen state={state} setState={setState} calc={calc} isDesktop={isDesktop} />;
+      case "annual": return <AnnualScreen state={state} calc={calc} setState={setState} isDesktop={isDesktop} />;
+      default: return null;
+    }
+  };
+
+  // Modals/overlays are position:fixed and self-center — shared by both shells.
+  const overlays = (
+    <>
+      {toast && (
+        <div className="fixed left-0 right-0 flex justify-center" style={{ bottom: "calc(100px + env(safe-area-inset-bottom, 0px))", zIndex: 60 }}>
+          <div className="ff-body flex items-center gap-2 px-4 py-2 rounded-full" style={{ background: C.ink, color: "#fff", fontSize: 13 }}>
+            <Check size={15} color={C.primaryBright} /> {toast}
+          </div>
+        </div>
+      )}
+      {showSettings && (
+        <SettingsSheet state={state} setState={setState} onClose={() => setShowSettings(false)} onReset={reset}
+          onSyncNow={syncNow} syncBusy={syncBusy}
+          authUser={authUser} authBusy={authBusy} authMessage={authMessage}
+          onSendMagicLink={sendMagicLink} onLogIn={logIn} onCreateAccount={createAccount} onSetPassword={setPassword} onSignOut={handleSignOut}
+          onStartTour={() => { setShowSettings(false); setTouring(true); }} />
+      )}
+      {!state.settings.hasSeenWelcome && (
+        <WelcomeSheet name={state.settings.name}
+          onClose={() => setState((s) => ({ ...s, settings: { ...s.settings, hasSeenWelcome: true } }))}
+          onStartTour={() => {
+            setState((s) => ({ ...s, settings: { ...s.settings, hasSeenWelcome: true } }));
+            setTouring(true);
+          }} />
+      )}
+      {touring && (
+        <TourOverlay screen={screen} setScreen={setScreen} showSettings={showSettings} setShowSettings={setShowSettings}
+          onFinish={() => setTouring(false)} />
+      )}
+    </>
+  );
+
+  if (isDesktop) {
+    return (
+      <>
+        <DesktopShell title={title} name={state.settings.name} screen={screen} setScreen={setScreen}
+          onSave={saveNow} saveBusy={saveBusy} onOpenSettings={() => setShowSettings(true)}
+          authUser={authUser} cloudOn={supabaseConfigured()}>
+          {renderScreen()}
+        </DesktopShell>
+        {overlays}
+      </>
+    );
+  }
+
   return (
     <div className="app-root" style={{ minHeight: "100vh", maxWidth: 480, margin: "0 auto", position: "relative" }}>
       <div className="flex items-center justify-between px-4 pt-4 pb-1">
@@ -1588,20 +1804,8 @@ export default function App() {
       </div>
 
       <div style={{ paddingBottom: "calc(92px + env(safe-area-inset-bottom, 0px))" }}>
-        {screen === "home" && <Dashboard state={state} calc={calc} setScreen={setScreen} authUser={authUser} cloudOn={supabaseConfigured()} onOpenSettings={() => setShowSettings(true)} />}
-        {screen === "budget" && <BudgetScreen state={state} setState={setState} calc={calc} />}
-        {screen === "track" && <TrackScreen state={state} setState={setState} calc={calc} onSavePeriod={savePeriod} />}
-        {screen === "monthly" && <MonthlyScreen state={state} setState={setState} calc={calc} />}
-        {screen === "annual" && <AnnualScreen state={state} calc={calc} setState={setState} />}
+        {renderScreen()}
       </div>
-
-      {toast && (
-        <div className="fixed left-0 right-0 flex justify-center" style={{ bottom: "calc(100px + env(safe-area-inset-bottom, 0px))", zIndex: 60 }}>
-          <div className="ff-body flex items-center gap-2 px-4 py-2 rounded-full" style={{ background: C.ink, color: "#fff", fontSize: 13 }}>
-            <Check size={15} color={C.primaryBright} /> {toast}
-          </div>
-        </div>
-      )}
 
       <div className="fixed left-0 right-0 bottom-0 flex justify-center" style={{ zIndex: 40 }}>
         <div className="flex w-full bottom-nav" style={{ maxWidth: 480 }}>
@@ -1617,27 +1821,7 @@ export default function App() {
         </div>
       </div>
 
-      {showSettings && (
-        <SettingsSheet state={state} setState={setState} onClose={() => setShowSettings(false)} onReset={reset}
-          onSyncNow={syncNow} syncBusy={syncBusy}
-          authUser={authUser} authBusy={authBusy} authMessage={authMessage}
-          onSendMagicLink={sendMagicLink} onLogIn={logIn} onCreateAccount={createAccount} onSetPassword={setPassword} onSignOut={handleSignOut}
-          onStartTour={() => { setShowSettings(false); setTouring(true); }} />
-      )}
-
-      {!state.settings.hasSeenWelcome && (
-        <WelcomeSheet name={state.settings.name}
-          onClose={() => setState((s) => ({ ...s, settings: { ...s.settings, hasSeenWelcome: true } }))}
-          onStartTour={() => {
-            setState((s) => ({ ...s, settings: { ...s.settings, hasSeenWelcome: true } }));
-            setTouring(true);
-          }} />
-      )}
-
-      {touring && (
-        <TourOverlay screen={screen} setScreen={setScreen} showSettings={showSettings} setShowSettings={setShowSettings}
-          onFinish={() => setTouring(false)} />
-      )}
+      {overlays}
     </div>
   );
 }
