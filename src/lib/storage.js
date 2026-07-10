@@ -44,8 +44,11 @@ async function readCloud() {
   } catch { return null; }
 }
 
-// Returns true only when the row actually landed in the cloud, so callers that
-// are about to destroy local data (sign-out) can tell whether it's safe.
+// Returns true only when the row actually reached the cloud. Supabase resolves
+// upsert() with an { error } object (it does not throw on a DB/permission error),
+// while a network failure rejects — both used to be swallowed silently, which let
+// a caller about to wipe the local copy (sign-out) believe the cloud was safe when
+// it wasn't. Callers now decide what to do with a false.
 async function writeCloud(state) {
   const sb = await getSupabase();
   const user = await getUser();
@@ -57,7 +60,27 @@ async function writeCloud(state) {
       updated_at: new Date().toISOString(),
     });
     return !error;
-  } catch { return false; /* offline — local copy still saved */ }
+  } catch { return false; } // offline — local copy is still saved
+}
+
+/**
+ * Pick the newer of two saved blobs by `_updatedAt` (a missing stamp counts as
+ * oldest). Ties resolve to `a` — pass local first so an equal-timestamp tie keeps
+ * the copy already on this device. Pure, so the last-write-wins rule is testable.
+ */
+export function newerOf(a, b) {
+  if (!a) return b || null;
+  if (!b) return a;
+  return (b._updatedAt || 0) > (a._updatedAt || 0) ? b : a;
+}
+
+/**
+ * This device's last-saved timestamp (0 if nothing saved). Used to decide, on a
+ * manual "Sync now", whether the cloud is genuinely newer than local before
+ * adopting it — so a stale cloud row can't clobber newer offline edits.
+ */
+export function localUpdatedAt() {
+  return readLS()?._updatedAt || 0;
 }
 
 /**
@@ -68,10 +91,7 @@ async function writeCloud(state) {
 export async function loadState() {
   const local = readLS();
   const cloud = await readCloud();
-  if (local && cloud) {
-    return (cloud._updatedAt || 0) > (local._updatedAt || 0) ? cloud : local;
-  }
-  return cloud || local || null;
+  return newerOf(local, cloud);
 }
 
 /** Force a pull from the cloud for the signed-in user (used by the "Sync now" button). */
@@ -88,10 +108,14 @@ export function clearLocal() {
   try { localStorage.removeItem(LS_KEY); } catch { /* ignore */ }
 }
 
-/** Persist to local always, and to the cloud once signed in. */
+/**
+ * Persist to local always, and to the cloud once signed in. Returns the stamped
+ * state plus whether the cloud write actually landed (`cloudSaved`) — sign-out
+ * relies on this to avoid deleting the only good copy while offline.
+ */
 export async function saveState(state) {
   const stamped = { ...state, _updatedAt: Date.now() };
   writeLS(stamped);
-  const cloudOk = await writeCloud(stamped);
-  return { cloudOk };
+  const cloudSaved = await writeCloud(stamped);
+  return { state: stamped, cloudSaved };
 }

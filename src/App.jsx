@@ -8,12 +8,12 @@ import {
 import { C, GROUP_KEYS, GROUP_META, THEMES } from "./lib/theme.js";
 import { ThemeMascotPanel, ChartCat } from "./components/ThemeMascot.jsx";
 import { TourOverlay } from "./components/Tour.jsx";
-import { DEFAULT_STATE } from "./lib/defaults.js";
+import { DEFAULT_STATE, normalizeState } from "./lib/defaults.js";
 import { num, fmt, fmtSigned, pct, fmtDate, cyclePosition } from "./lib/format.js";
-import { useCalc } from "./lib/calc.js";
-import { cycleDaysFor, emptyPeriod, buildPeriodSnapshot, autoRollover } from "./lib/period.js";
-import { useReducedMotion, useCountUp } from "./lib/hooks.js";
-import { loadState, saveState, pullCloud, clearLocal, getLastEmail, setLastEmail } from "./lib/storage.js";
+import { useCalc, spendStatusKey } from "./lib/calc.js";
+import { cycleDaysFor, advanceDaysFor, nextPeriodNumber, normalizeHistory, monthlyActualsFromHistory, emptyPeriod, buildPeriodSnapshot, addDays, autoRollover } from "./lib/period.js";
+import { useReducedMotion, useCountUp, useIsDesktop } from "./lib/hooks.js";
+import { loadState, saveState, pullCloud, clearLocal, getLastEmail, setLastEmail, localUpdatedAt } from "./lib/storage.js";
 import { supabaseConfigured, signInWithEmail, signInWithPassword, signUpWithPassword, updatePassword, signOut, getUser, onAuthChange } from "./lib/supabase.js";
 
 // recharts is one of the two heaviest deps in the app (see CLAUDE.md backlog);
@@ -36,17 +36,33 @@ function Card({ children, style, className = "", ...rest }) {
   );
 }
 
-function NumInput({ value, onChange, align = "right", placeholder = "0", bold = false, disabled = false }) {
-  // Width grows with the number of digits typed, instead of a fixed box.
-  const digits = value ? String(value).length : String(placeholder).length;
-  const chWidth = Math.max(digits + 1, 3);
+// Keeps only digits and a single decimal point from raw typed text.
+function cleanDecimal(raw) {
+  let v = String(raw).replace(/[^0-9.]/g, "");
+  const dot = v.indexOf(".");
+  if (dot !== -1) v = v.slice(0, dot + 1) + v.slice(dot + 1).replace(/\./g, ""); // keep only the first dot
+  return v;
+}
+
+function NumInput({ value, onChange, align = "right", placeholder = "0", bold = false, disabled = false, ariaLabel }) {
+  // While focused, hold the raw string being typed (draft) so intermediate values
+  // like "0", "0." and "0.50" survive instead of being wiped by a parse-on-every-
+  // keystroke round-trip — 0 is falsy, so the old field blanked itself and cents
+  // were untypeable. type is "text" + inputMode="decimal" because type="number"
+  // drops a trailing "." in many browsers. Downstream calc still updates live.
+  const [draft, setDraft] = useState(null);
+  const shown = draft != null ? draft : (value ? String(value) : "");
+  const chWidth = Math.max((shown.length || String(placeholder).length) + 1, 3);
+  const handle = (e) => { const v = cleanDecimal(e.target.value); setDraft(v); onChange(parseFloat(v) || 0); };
   return (
     <div className="flex items-center rounded-xl px-2" style={{ background: C.bg, border: `1px solid ${C.border}`, flexShrink: 0, opacity: disabled ? 0.55 : 1 }}>
       <span className="ff-num" style={{ color: C.muted, fontSize: 13 }}>$</span>
       <input
-        type="number" inputMode="decimal" placeholder={placeholder}
-        value={value ? String(value) : ""}
-        onChange={(e) => onChange(parseFloat(e.target.value) || 0)}
+        type="text" inputMode="decimal" placeholder={placeholder} aria-label={ariaLabel}
+        value={shown}
+        onFocus={(e) => setDraft(e.target.value)}
+        onChange={handle}
+        onBlur={() => setDraft(null)}
         readOnly={disabled}
         className="ff-num bg-transparent outline-none py-2 px-1"
         style={{
@@ -59,16 +75,22 @@ function NumInput({ value, onChange, align = "right", placeholder = "0", bold = 
   );
 }
 
-function PercentInput({ value, onChange }) {
-  // value is a decimal (0.2 = 20%); the field shows/edits the whole percent.
-  const display = value ? String(Math.round(value * 1000) / 10) : "";
-  const chWidth = Math.max((display || "0").length + 1, 2);
+function PercentInput({ value, onChange, ariaLabel = "Percent" }) {
+  // value is a decimal (0.2 = 20%); the field shows/edits the whole percent. Same
+  // draft-string handling as NumInput so "22.5" and a leading "0" stay typeable.
+  const [draft, setDraft] = useState(null);
+  const canonical = value ? String(Math.round(value * 1000) / 10) : "";
+  const shown = draft != null ? draft : canonical;
+  const chWidth = Math.max((shown.length || 1) + 1, 2);
+  const handle = (e) => { const v = cleanDecimal(e.target.value); setDraft(v); onChange((parseFloat(v) || 0) / 100); };
   return (
     <div className="flex items-center rounded-xl px-2" style={{ background: C.bg, border: `1px solid ${C.border}`, flexShrink: 0 }}>
       <input
-        type="number" inputMode="decimal" placeholder="0"
-        value={display}
-        onChange={(e) => onChange((parseFloat(e.target.value) || 0) / 100)}
+        type="text" inputMode="decimal" placeholder="0" aria-label={ariaLabel}
+        value={shown}
+        onFocus={(e) => setDraft(e.target.value)}
+        onChange={handle}
+        onBlur={() => setDraft(null)}
         className="ff-num bg-transparent outline-none py-2 px-1"
         style={{
           textAlign: "left", color: C.ink, fontSize: 15, fontWeight: 500,
@@ -129,11 +151,11 @@ function Row({ k, v, color }) {
 function LineRow({ name, amount, onName, onAmount, onDelete }) {
   return (
     <div className="flex items-center gap-2 py-1.5">
-      <input value={name} onChange={(e) => onName(e.target.value)}
+      <input value={name} onChange={(e) => onName(e.target.value)} aria-label="Line item name"
         className="ff-body flex-1 bg-transparent outline-none py-1"
         style={{ color: C.ink, fontSize: 14, minWidth: 0, textOverflow: "ellipsis" }} />
-      <NumInput value={amount} onChange={onAmount} />
-      <button onClick={onDelete} className="p-1" style={{ color: C.muted }}><Trash2 size={15} /></button>
+      <NumInput value={amount} onChange={onAmount} ariaLabel={`${name || "Line item"} amount`} />
+      <button onClick={onDelete} className="p-1" style={{ color: C.muted }} aria-label={`Delete ${name || "line item"}`}><Trash2 size={15} /></button>
     </div>
   );
 }
@@ -142,15 +164,15 @@ function DebtLineRow({ name, amount, balance, onName, onAmount, onBalance, onDel
   return (
     <div className="py-1.5">
       <div className="flex items-center gap-2">
-        <input value={name} onChange={(e) => onName(e.target.value)}
+        <input value={name} onChange={(e) => onName(e.target.value)} aria-label="Debt name"
           className="ff-body flex-1 bg-transparent outline-none py-1"
           style={{ color: C.ink, fontSize: 14, minWidth: 0, textOverflow: "ellipsis" }} />
-        <NumInput value={amount} onChange={onAmount} />
-        <button onClick={onDelete} className="p-1" style={{ color: C.muted }}><Trash2 size={15} /></button>
+        <NumInput value={amount} onChange={onAmount} ariaLabel={`${name || "Debt"} payment per period`} />
+        <button onClick={onDelete} className="p-1" style={{ color: C.muted }} aria-label={`Delete ${name || "debt"}`}><Trash2 size={15} /></button>
       </div>
       <div className="flex items-center gap-2 mt-0.5">
         <span className="ff-body flex-1" style={{ color: C.muted, fontSize: 11 }}>Balance owed</span>
-        <NumInput value={balance} onChange={onBalance} />
+        <NumInput value={balance} onChange={onBalance} ariaLabel={`${name || "Debt"} balance owed`} />
       </div>
     </div>
   );
@@ -168,7 +190,7 @@ function TrackRow({ name, value, onChange, total, budget, locked, onToggleLock }
           </div>
         )}
       </div>
-      <NumInput value={value} onChange={onChange} disabled={locked} />
+      <NumInput value={value} onChange={onChange} disabled={locked} ariaLabel={`${name} spent this week`} />
       {onToggleLock && (
         <button onClick={onToggleLock} className="p-1" style={{ color: locked ? C.primary : C.muted, flexShrink: 0 }}
           title={locked ? "Unlock this amount" : "Lock this amount"} aria-label={locked ? "Unlock this amount" : "Lock this amount"}>
@@ -179,7 +201,7 @@ function TrackRow({ name, value, onChange, total, budget, locked, onToggleLock }
   );
 }
 
-function GoalCard({ state, calc }) {
+function GoalCard({ state, calc, className = "p-4 mt-3" }) {
   const goal = num(state.goal);
   const rateGoal = num(state.savingsRateGoal);
   const saved = calc.savedThisPeriod;
@@ -199,7 +221,7 @@ function GoalCard({ state, calc }) {
   const anyOnTrack = data.some((d) => d.onTrack);
 
   return (
-    <Card data-tour="goalcard" className="p-4 mt-3">
+    <Card data-tour="goalcard" className={className}>
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2">
           <Target size={18} color={C.primary} />
@@ -225,115 +247,183 @@ function GoalCard({ state, calc }) {
 }
 
 /* ============================== screens ============================== */
-function Dashboard({ state, calc, setScreen, authUser, cloudOn, onOpenSettings }) {
+function Dashboard({ state, calc, setScreen, authUser, cloudOn, onOpenSettings, isDesktop }) {
   const reduced = useReducedMotion();
   const hero = useCountUp(calc.leftOverBudget, reduced);
+  const cycle = cyclePosition(state.periodStart, cycleDaysFor(state.payFrequency));
+  // Spend status now weighs pace against how much of the period has elapsed, not
+  // just the absolute % of budget — so "80% spent by day 4" reads honestly instead
+  // of "On track". See spendStatusKey for the thresholds and the early-period guard.
+  const elapsedFraction = cycle && !cycle.upcoming ? cycle.day / cycle.cycleDays : null;
   const ratio = Math.max(0, Math.min(1.35, calc.ratio));
-  const gaugeColor = calc.ratio <= 0.85 ? C.primary : calc.ratio <= 1 ? C.gold : C.coral;
-  const status = calc.ratio <= 0.85 ? "On track" : calc.ratio <= 1 ? "Cutting it close" : "Over budget";
-  const mood = calc.ratio <= 0.85 ? "happy" : calc.ratio <= 1 ? "neutral" : "worried";
-  const moodCaption = mood === "happy" ? "On track — nice work!" : mood === "neutral" ? "Getting close — keep an eye on it." : "Over budget — let's adjust.";
+  const statusKey = spendStatusKey(calc.ratio, elapsedFraction);
+  const gaugeColor = statusKey === "over" ? C.coral : statusKey === "ontrack" ? C.primary : C.gold;
+  const status = { over: "Over budget", close: "Cutting it close", ahead: "Ahead of pace", ontrack: "On track" }[statusKey];
+  const mood = statusKey === "ontrack" ? "happy" : statusKey === "over" ? "worried" : "neutral";
+  const moodCaption = statusKey === "ontrack" ? "On track — nice work!"
+    : statusKey === "over" ? "Over budget — let's adjust."
+    : statusKey === "ahead" ? "Spending a little fast — ease up if you can."
+    : "Getting close — keep an eye on it.";
 
   const donutData = GROUP_KEYS
     .map((k) => ({ name: GROUP_META[k].label, value: calc.groupBudget[k], color: GROUP_META[k].color }))
     .filter((d) => d.value > 0);
   const leftToSpend = calc.expenseBudget - calc.spentSoFar;
-  const cycle = cyclePosition(state.periodStart, cycleDaysFor(state.payFrequency));
 
+  // The cards are built once as pieces, then arranged two ways: a vertical stack on
+  // mobile (unchanged), a multi-column grid on desktop. Margins are applied by the
+  // arrangement, not baked into the pieces.
+  const heroCard = (
+    <Card data-tour="hero" className="p-5" style={{ background: C.heroGradient, border: "none" }}>
+      <div className="flex items-center justify-between">
+        <span className="ff-body" style={{ color: "rgba(255,255,255,0.72)", fontSize: 12, letterSpacing: 0.4 }}>MONEY LEFT OVER · THIS PERIOD</span>
+        <span className="ff-body px-2 py-1 rounded-full" style={{ fontSize: 11, color: "#fff", background: "rgba(255,255,255,0.16)" }}>{status}</span>
+      </div>
+      {cycle && (
+        <div className="ff-body" style={{ color: "rgba(255,255,255,0.6)", fontSize: 11, marginTop: 3 }}>
+          {cycle.upcoming
+            ? `Next period starts ${fmtDate(cycle.startDate)}`
+            : `Day ${cycle.day} of ${cycle.cycleDays}${cycle.week ? ` · Week ${cycle.week}` : ""}`}
+        </div>
+      )}
+      <div className="ff-num" style={{ color: "#fff", fontSize: "3.4rem", fontWeight: 700, lineHeight: 1.05, marginTop: 6, fontVariantNumeric: "tabular-nums" }}>{fmt(hero)}</div>
+      <div className="ff-body" style={{ color: "rgba(255,255,255,0.8)", fontSize: 13, marginTop: 2 }}>
+        {calc.leftOverBudget >= 0 ? "after every bill and your savings" : "your plan spends more than you make"}
+      </div>
+      <div className="mt-4 rounded-full overflow-hidden" style={{ height: 10, background: "rgba(255,255,255,0.18)" }}>
+        <div style={{ width: (ratio / 1.35 * 100) + "%", height: "100%", background: gaugeColor, borderRadius: 999, transition: reduced ? "none" : "width 0.6s ease" }} />
+      </div>
+      <div className="flex justify-between mt-2 ff-body" style={{ color: "rgba(255,255,255,0.82)", fontSize: 12 }}>
+        <span>{calc.anyActual ? fmt(calc.spentSoFar) + " spent" : "Nothing logged yet"}</span>
+        <span>{fmt(leftToSpend)} left to spend</span>
+      </div>
+    </Card>
+  );
+
+  const halfwayCard = (cycle && !cycle.upcoming && cycle.day > cycle.cycleDays / 2 && !calc.anyActual) ? (
+    <Card className="p-4 flex items-center gap-3">
+      <Sparkles size={18} color={C.gold} />
+      <div className="flex-1" style={{ minWidth: 0 }}>
+        <div className="ff-body" style={{ color: C.ink, fontSize: 13, fontWeight: 600 }}>You're halfway through this period</div>
+        <div className="ff-body mt-0.5" style={{ color: C.muted, fontSize: 12 }}>Nothing logged yet — jot down what you've spent so far.</div>
+      </div>
+      <button onClick={() => setScreen("track")} className="rounded-xl px-3 py-2" style={{ background: C.primary, color: "#fff", flexShrink: 0 }}>
+        <span className="ff-body" style={{ fontWeight: 600, fontSize: 13 }}>Log it</span>
+      </button>
+    </Card>
+  ) : null;
+
+  const mascotCard = (state.settings.theme !== "classic" && state.settings.themeFx) ? (
+    <Card className="p-3 flex items-center gap-3">
+      <ThemeMascotPanel theme={state.settings.theme} mood={mood} enabled={state.settings.themeFx} />
+      <span className="ff-body" style={{ color: C.ink, fontSize: 13 }}>{moodCaption}</span>
+    </Card>
+  ) : null;
+
+  const statsRow = (
+    <div data-tour="stats" className="flex gap-3">
+      <StatTile label="Income" value={fmt(calc.incomeBudget)} sub="per period" />
+      <StatTile label="Expenses" value={fmt(calc.expenseBudget)} sub="incl. savings" />
+      <StatTile label="Savings rate" value={pct(calc.savingsRateBudget)} sub="of income"
+        color={calc.savingsRateBudget >= num(state.savingsRateGoal) ? C.primary : C.coral} />
+    </div>
+  );
+
+  const quickActions = (
+    <div data-tour="quickactions" className="flex gap-3">
+      <button onClick={() => setScreen("track")} className="flex-1 flex items-center justify-center gap-2 rounded-2xl py-3" style={{ background: C.primary, color: "#fff" }}>
+        <PlusCircle size={18} /> <span className="ff-body" style={{ fontWeight: 600, fontSize: 14 }}>Log spending</span>
+      </button>
+      <button onClick={() => setScreen("budget")} className="flex-1 flex items-center justify-center gap-2 rounded-2xl py-3" style={{ background: C.surface, color: C.ink, border: `1px solid ${C.border}` }}>
+        <Wallet size={18} /> <span className="ff-body" style={{ fontWeight: 600, fontSize: 14 }}>Edit budget</span>
+      </button>
+    </div>
+  );
+
+  const donutCard = (
+    <Card data-tour="donut" className="p-4">
+      {isDesktop && <div className="ff-display mb-2" style={{ color: C.ink, fontSize: 15, fontWeight: 600 }}>Where it goes</div>}
+      <div style={{ height: 200, position: "relative" }}>
+        <Suspense fallback={<ChartSkeleton />}>
+          <SpendDonutChart data={donutData} />
+        </Suspense>
+        <ChartCat mood={mood} enabled={state.settings.themeFx && state.settings.theme === "pixelkitty"} />
+      </div>
+      <div className="flex flex-wrap gap-x-4 gap-y-1 mt-2 px-1">
+        {donutData.map((d, i) => (
+          <div key={i} className="flex items-center gap-1.5">
+            <span style={{ width: 9, height: 9, borderRadius: 3, background: d.color, display: "inline-block" }} />
+            <span className="ff-body" style={{ color: C.inkSoft, fontSize: 12 }}>{d.name}</span>
+            <span className="ff-num" style={{ color: C.muted, fontSize: 12 }}>{fmt(d.value)}</span>
+          </div>
+        ))}
+      </div>
+    </Card>
+  );
+
+  // Desktop: a 2×2 dashboard grid — hero + stats/actions on top, donut + goal below.
+  if (isDesktop) {
+    return (
+      <div className="pb-2">
+        <div style={{ display: "grid", gridTemplateColumns: "1.25fr 1fr", gap: 16, alignItems: "start" }}>
+          {heroCard}
+          <div className="flex flex-col gap-3">
+            {statsRow}
+            {quickActions}
+            {mascotCard}
+          </div>
+        </div>
+        {halfwayCard && <div className="mt-4">{halfwayCard}</div>}
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, alignItems: "start", marginTop: 20 }}>
+          {donutCard}
+          <GoalCard state={state} calc={calc} className="p-4" />
+        </div>
+      </div>
+    );
+  }
+
+  // Mobile: the original single-column stack, unchanged.
   return (
     <div className="px-4 pb-2">
       <AccountBanner authUser={authUser} cloudOn={cloudOn} onManage={onOpenSettings} />
-      <Card data-tour="hero" className="p-5 mt-3" style={{ background: "linear-gradient(135deg,#163d2c 0%,#0f5138 55%,#18895A 130%)", border: "none" }}>
-        <div className="flex items-center justify-between">
-          <span className="ff-body" style={{ color: "rgba(255,255,255,0.72)", fontSize: 12, letterSpacing: 0.4 }}>MONEY LEFT OVER · THIS PERIOD</span>
-          <span className="ff-body px-2 py-1 rounded-full" style={{ fontSize: 11, color: "#fff", background: "rgba(255,255,255,0.16)" }}>{status}</span>
-        </div>
-        {cycle && (
-          <div className="ff-body" style={{ color: "rgba(255,255,255,0.6)", fontSize: 11, marginTop: 3 }}>
-            Day {cycle.day} of {cycle.cycleDays}{cycle.week ? ` · Week ${cycle.week}` : ""}
-          </div>
-        )}
-        <div className="ff-num" style={{ color: "#fff", fontSize: "3.4rem", fontWeight: 700, lineHeight: 1.05, marginTop: 6, fontVariantNumeric: "tabular-nums" }}>{fmt(hero)}</div>
-        <div className="ff-body" style={{ color: "rgba(255,255,255,0.8)", fontSize: 13, marginTop: 2 }}>
-          {calc.leftOverBudget >= 0 ? "after every bill and your savings" : "your plan spends more than you make"}
-        </div>
-        <div className="mt-4 rounded-full overflow-hidden" style={{ height: 10, background: "rgba(255,255,255,0.18)" }}>
-          <div style={{ width: (ratio / 1.35 * 100) + "%", height: "100%", background: gaugeColor, borderRadius: 999, transition: reduced ? "none" : "width 0.6s ease" }} />
-        </div>
-        <div className="flex justify-between mt-2 ff-body" style={{ color: "rgba(255,255,255,0.82)", fontSize: 12 }}>
-          <span>{calc.anyActual ? fmt(calc.spentSoFar) + " spent" : "Nothing logged yet"}</span>
-          <span>{fmt(leftToSpend)} left to spend</span>
-        </div>
-      </Card>
-
-      {cycle && cycle.day > cycle.cycleDays / 2 && !calc.anyActual && (
-        <Card className="p-4 mt-3 flex items-center gap-3">
-          <Sparkles size={18} color={C.gold} />
-          <div className="flex-1" style={{ minWidth: 0 }}>
-            <div className="ff-body" style={{ color: C.ink, fontSize: 13, fontWeight: 600 }}>You're halfway through this period</div>
-            <div className="ff-body mt-0.5" style={{ color: C.muted, fontSize: 12 }}>Nothing logged yet — jot down what you've spent so far.</div>
-          </div>
-          <button onClick={() => setScreen("track")} className="rounded-xl px-3 py-2" style={{ background: C.primary, color: "#fff", flexShrink: 0 }}>
-            <span className="ff-body" style={{ fontWeight: 600, fontSize: 13 }}>Log it</span>
-          </button>
-        </Card>
-      )}
-
-      {state.settings.theme !== "classic" && state.settings.themeFx && (
-        <Card className="p-3 mt-3 flex items-center gap-3">
-          <ThemeMascotPanel theme={state.settings.theme} mood={mood} enabled={state.settings.themeFx} />
-          <span className="ff-body" style={{ color: C.ink, fontSize: 13 }}>{moodCaption}</span>
-        </Card>
-      )}
-
-      <div data-tour="stats" className="flex gap-3 mt-3">
-        <StatTile label="Income" value={fmt(calc.incomeBudget)} sub="per period" />
-        <StatTile label="Expenses" value={fmt(calc.expenseBudget)} sub="incl. savings" />
-        <StatTile label="Savings rate" value={pct(calc.savingsRateBudget)} sub="of income"
-          color={calc.savingsRateBudget >= num(state.savingsRateGoal) ? C.primary : C.coral} />
-      </div>
-
-      <div data-tour="quickactions" className="flex gap-3 mt-3">
-        <button onClick={() => setScreen("track")} className="flex-1 flex items-center justify-center gap-2 rounded-2xl py-3" style={{ background: C.primary, color: "#fff" }}>
-          <PlusCircle size={18} /> <span className="ff-body" style={{ fontWeight: 600, fontSize: 14 }}>Log spending</span>
-        </button>
-        <button onClick={() => setScreen("budget")} className="flex-1 flex items-center justify-center gap-2 rounded-2xl py-3" style={{ background: C.surface, color: C.ink, border: `1px solid ${C.border}` }}>
-          <Wallet size={18} /> <span className="ff-body" style={{ fontWeight: 600, fontSize: 14 }}>Edit budget</span>
-        </button>
-      </div>
-
+      <div className="mt-3">{heroCard}</div>
+      {halfwayCard && <div className="mt-3">{halfwayCard}</div>}
+      {mascotCard && <div className="mt-3">{mascotCard}</div>}
+      <div className="mt-3">{statsRow}</div>
+      <div className="mt-3">{quickActions}</div>
       <SectionTitle>Where it goes</SectionTitle>
-      <Card data-tour="donut" className="p-4">
-        <div style={{ height: 200, position: "relative" }}>
-          <Suspense fallback={<ChartSkeleton />}>
-            <SpendDonutChart data={donutData} />
-          </Suspense>
-          <ChartCat mood={mood} enabled={state.settings.themeFx && state.settings.theme === "pixelkitty"} />
-        </div>
-        <div className="flex flex-wrap gap-x-4 gap-y-1 mt-2 px-1">
-          {donutData.map((d, i) => (
-            <div key={i} className="flex items-center gap-1.5">
-              <span style={{ width: 9, height: 9, borderRadius: 3, background: d.color, display: "inline-block" }} />
-              <span className="ff-body" style={{ color: C.inkSoft, fontSize: 12 }}>{d.name}</span>
-              <span className="ff-num" style={{ color: C.muted, fontSize: 12 }}>{fmt(d.value)}</span>
-            </div>
-          ))}
-        </div>
-      </Card>
-
+      {donutCard}
       <GoalCard state={state} calc={calc} />
     </div>
   );
 }
 
-function BudgetScreen({ state, setState, calc }) {
+function BudgetScreen({ state, setState, calc, isDesktop }) {
   const setIncome = (id, patch) => setState((s) => ({ ...s, income: s.income.map((l) => l.id === id ? { ...l, ...patch } : l) }));
   const addIncome = () => setState((s) => ({ ...s, income: [...s.income, { id: "inc_" + Date.now(), name: "New income", amount: 0 }] }));
   const delIncome = (id) => setState((s) => ({ ...s, income: s.income.filter((l) => l.id !== id) }));
 
   const setLine = (g, id, patch) => setState((s) => ({ ...s, groups: { ...s.groups, [g]: { lines: s.groups[g].lines.map((l) => l.id === id ? { ...l, ...patch } : l) } } }));
   const addLine = (g) => setState((s) => ({ ...s, groups: { ...s.groups, [g]: { lines: [...s.groups[g].lines, { id: g[0] + "_" + Date.now(), name: "New item", amount: 0 }] } } }));
-  const delLine = (g, id) => setState((s) => ({ ...s, groups: { ...s.groups, [g]: { lines: s.groups[g].lines.filter((l) => l.id !== id) } } }));
+  // Deleting a line also prunes its logged actuals + locks from the current period,
+  // so spending doesn't silently vanish from category totals into orphaned keys that
+  // pile up in saved state. Confirm first if there's spending logged against it.
+  const delLine = (g, id) => {
+    const loggedThisPeriod = num(state.period.week1[id]) + num(state.period.week2[id]);
+    if (loggedThisPeriod > 0 && !window.confirm("This line has spending logged this period. Delete it and its logged amounts too?")) return;
+    setState((s) => {
+      const drop = (obj) => { if (!obj || !(id in obj)) return obj; const n = { ...obj }; delete n[id]; return n; };
+      return {
+        ...s,
+        groups: { ...s.groups, [g]: { lines: s.groups[g].lines.filter((l) => l.id !== id) } },
+        period: {
+          ...s.period,
+          week1: drop(s.period.week1), week2: drop(s.period.week2),
+          locks: { week1: drop(s.period.locks?.week1), week2: drop(s.period.locks?.week2) },
+        },
+      };
+    });
+  };
 
   // debt payoff estimate — the only place a balance owed (not derivable from
   // income/spending) is entered, right where it's used.
@@ -346,7 +436,7 @@ function BudgetScreen({ state, setState, calc }) {
   })();
 
   return (
-    <div className="px-4 pb-2">
+    <div className={isDesktop ? "pb-2" : "px-4 pb-2"}>
       <div className="ff-body mt-3 px-1" style={{ color: C.muted, fontSize: 13 }}>
         Set what you make and what you plan to spend each pay period. Everything else in the app calculates from here.
       </div>
@@ -363,6 +453,8 @@ function BudgetScreen({ state, setState, calc }) {
         </div>
       </Card>
 
+      {/* desktop: the six categories flow in two columns to use the width */}
+      <div style={isDesktop ? { display: "grid", gridTemplateColumns: "1fr 1fr", columnGap: 20, alignItems: "start" } : undefined}>
       {GROUP_KEYS.map((g) => (
         <div key={g}>
           <SectionTitle right={<button onClick={() => addLine(g)} style={{ color: C.primary }}><Plus size={18} /></button>}>
@@ -410,6 +502,7 @@ function BudgetScreen({ state, setState, calc }) {
           )}
         </div>
       ))}
+      </div>
 
       <SectionTitle>Per-period summary</SectionTitle>
       <Card className="p-4">
@@ -424,7 +517,7 @@ function BudgetScreen({ state, setState, calc }) {
   );
 }
 
-function TrackScreen({ state, setState, calc, onSavePeriod }) {
+function TrackScreen({ state, setState, calc, onSavePeriod, isDesktop }) {
   const showWeeks = (state.payFrequency || "biweekly") === "biweekly";
   const [weekTab, setWeekTab] = useState("week1");
   const week = showWeeks ? weekTab : "week1"; // weekly/job frequencies just use one bucket
@@ -450,14 +543,16 @@ function TrackScreen({ state, setState, calc, onSavePeriod }) {
     },
   }));
 
+  // Expenses here is the committed figure (plan, raised where you're already over),
+  // so Income − Expenses lines up with the Net bar instead of swinging as you log.
   const barData = [
     { name: "Income", value: calc.incomeThisPeriod, color: C.primary },
-    { name: "Expenses", value: calc.anyActual ? calc.spentSoFar : calc.expenseBudget, color: C.coral },
+    { name: "Expenses", value: calc.committedExpenses, color: C.coral },
     { name: "Net", value: calc.netProfit, color: C.gold },
   ];
 
   return (
-    <div className="px-4 pb-2">
+    <div className={isDesktop ? "pb-2" : "px-4 pb-2"}>
       {showWeeks && (
         <div className="flex gap-1 p-1 rounded-2xl mt-3" style={{ background: C.surface, border: `1px solid ${C.border}` }}>
           {["week1", "week2"].map((w) => (
@@ -489,11 +584,13 @@ function TrackScreen({ state, setState, calc, onSavePeriod }) {
         {state.period.incomeOverrideOn && (
           <div className="flex items-center justify-between pt-2 mt-2" style={{ borderTop: `1px solid ${C.border}` }}>
             <span className="ff-body" style={{ color: C.ink, fontSize: 14 }}>Income received</span>
-            <NumInput value={state.period.incomeOverride} onChange={setIncomeOverride} />
+            <NumInput value={state.period.incomeOverride} onChange={setIncomeOverride} ariaLabel="Actual income received this period" />
           </div>
         )}
       </Card>
 
+      {/* desktop: log categories in two columns */}
+      <div style={isDesktop ? { display: "grid", gridTemplateColumns: "1fr 1fr", columnGap: 20, alignItems: "start" } : undefined}>
       {GROUP_KEYS.map((g) => (
         <div key={g}>
           <SectionTitle>
@@ -514,6 +611,7 @@ function TrackScreen({ state, setState, calc, onSavePeriod }) {
           </Card>
         </div>
       ))}
+      </div>
 
       <div className="mt-4 px-1">
         <label className="flex items-center gap-2 ff-body" style={{ color: C.muted, fontSize: 13 }}>
@@ -526,7 +624,7 @@ function TrackScreen({ state, setState, calc, onSavePeriod }) {
           {["materials", "labor", "shipping"].map((k) => (
             <div key={k} className="flex items-center justify-between py-1.5">
               <span className="ff-body capitalize" style={{ color: C.ink, fontSize: 14 }}>{k}</span>
-              <NumInput value={state.period.cogs[k]} onChange={(v) => setCogs(k, v)} />
+              <NumInput value={state.period.cogs[k]} onChange={(v) => setCogs(k, v)} ariaLabel={`${k} cost`} />
             </div>
           ))}
         </Card>
@@ -538,6 +636,9 @@ function TrackScreen({ state, setState, calc, onSavePeriod }) {
           <Suspense fallback={<ChartSkeleton />}>
             <CategoryBarChart data={barData} margin={{ top: 6, right: 6, left: -16, bottom: 0 }} />
           </Suspense>
+        </div>
+        <div className="ff-body mt-1 mb-1" style={{ color: C.muted, fontSize: 12 }}>
+          Expenses count your full plan until the period closes — logging less doesn't free it up, since the rest is still coming.
         </div>
         {state.period.cogsOn && <Row k="Gross profit (income − COGS)" v={fmt(calc.grossProfit)} />}
         <Row k="Net profit (income − expenses)" v={fmt(calc.netProfit)} color={calc.netProfit >= 0 ? C.primary : C.coral} />
@@ -557,31 +658,40 @@ function TrackScreen({ state, setState, calc, onSavePeriod }) {
   );
 }
 
-function MonthlyScreen({ state, setState, calc }) {
+function MonthlyScreen({ state, setState, calc, isDesktop }) {
   const freq = state.payFrequency || "biweekly";
   const paycheckOptions = freq === "weekly" ? [4, 5] : freq === "job" ? [1] : [2, 3];
   const bonusCount = paycheckOptions[paycheckOptions.length - 1];
   const m = state.monthlyPaychecks;
-  const setActual = (g, v) => setState((s) => ({ ...s, monthlyActual: { ...s.monthlyActual, [g]: v } }));
+
+  // Actual spend this calendar month is now DERIVED (per the app's "never type a
+  // number we can derive" rule): saved periods whose pay date lands in this month,
+  // plus what's been logged in the in-flight period. Resets automatically at the
+  // month boundary, replacing the old hand-typed monthlyActual that never reset.
+  const now = new Date();
+  const monthKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
+  const monthActual = monthlyActualsFromHistory(state.history, monthKey);
+  GROUP_KEYS.forEach((g) => { monthActual[g] += calc.groupActual[g]; });
+
   const incomeM = calc.incomeBudget * m;
   const expenseM = calc.expenseBudget * m;
   const leftM = incomeM - expenseM;
   const savingsM = calc.groupBudget.savings * m;
   const extra = calc.incomeBudget;
 
-  return (
-    <div className="px-4 pb-2">
-      {paycheckOptions.length > 1 && (
-        <div data-tour="paycheck-toggle" className="flex gap-1 p-1 rounded-2xl mt-3" style={{ background: C.surface, border: `1px solid ${C.border}` }}>
-          {paycheckOptions.map((n) => (
-            <button key={n} onClick={() => setState((s) => ({ ...s, monthlyPaychecks: n }))} className="flex-1 rounded-xl py-2 ff-body"
-              style={{ background: m === n ? C.primary : "transparent", color: m === n ? "#fff" : C.muted, fontWeight: 600, fontSize: 13 }}>
-              {n === bonusCount ? `Bonus month (${n} paychecks)` : `Normal month (${n} paychecks)`}
-            </button>
-          ))}
-        </div>
-      )}
+  const toggle = paycheckOptions.length > 1 ? (
+    <div data-tour="paycheck-toggle" className="flex gap-1 p-1 rounded-2xl mt-3" style={{ background: C.surface, border: `1px solid ${C.border}` }}>
+      {paycheckOptions.map((n) => (
+        <button key={n} onClick={() => setState((s) => ({ ...s, monthlyPaychecks: n }))} className="flex-1 rounded-xl py-2 ff-body"
+          style={{ background: m === n ? C.primary : "transparent", color: m === n ? "#fff" : C.muted, fontWeight: 600, fontSize: 13 }}>
+          {n === bonusCount ? `Bonus month (${n} paychecks)` : `Normal month (${n} paychecks)`}
+        </button>
+      ))}
+    </div>
+  ) : null;
 
+  const tableSection = (
+    <>
       <SectionTitle>Budget vs actual</SectionTitle>
       <Card data-tour="budget-vs-actual" className="px-4 py-3">
         <div className="flex ff-body pb-2" style={{ color: C.muted, fontSize: 11, textTransform: "uppercase", letterSpacing: 0.3 }}>
@@ -592,7 +702,7 @@ function MonthlyScreen({ state, setState, calc }) {
         </div>
         {GROUP_KEYS.map((g) => {
           const b = calc.groupBudget[g] * m;
-          const a = num(state.monthlyActual[g]);
+          const a = monthActual[g];
           const ou = b - a;
           return (
             <div key={g} className="flex items-center py-1.5" style={{ borderTop: `1px solid ${C.border}` }}>
@@ -601,15 +711,22 @@ function MonthlyScreen({ state, setState, calc }) {
                 <span>{GROUP_META[g].label}</span>
               </span>
               <span className="ff-num" style={{ width: 76, textAlign: "right", color: C.muted, fontSize: 13, flexShrink: 0 }}>{fmt(b)}</span>
-              <span style={{ paddingLeft: 6, flexShrink: 0 }}><NumInput value={a} onChange={(v) => setActual(g, v)} /></span>
+              <span className="ff-num" style={{ width: 96, textAlign: "right", color: C.ink, fontSize: 14, flexShrink: 0 }}>{a === 0 ? "—" : fmt(a)}</span>
               <span className="ff-num" style={{ width: 72, textAlign: "right", color: a === 0 ? C.muted : ou >= 0 ? C.primary : C.coral, fontSize: 13, flexShrink: 0 }}>
                 {a === 0 ? "—" : fmtSigned(ou)}
               </span>
             </div>
           );
         })}
+        <div className="ff-body mt-2" style={{ color: C.muted, fontSize: 12 }}>
+          Actuals are computed from this month's saved periods plus what you've logged in the current one — no need to type them.
+        </div>
       </Card>
+    </>
+  );
 
+  const summarySection = (
+    <>
       <SectionTitle>Monthly summary</SectionTitle>
       <Card className="p-4">
         <Row k="Income (budgeted)" v={fmt(incomeM)} />
@@ -618,22 +735,44 @@ function MonthlyScreen({ state, setState, calc }) {
         <Row k="Savings this month" v={fmt(savingsM)} color={C.primary} />
         <Row k="Savings rate" v={pct(incomeM ? savingsM / incomeM : 0)} />
       </Card>
+    </>
+  );
 
-      {paycheckOptions.length > 1 && m === bonusCount && (
-        <>
-          <SectionTitle>Your bonus paycheck</SectionTitle>
-          <Card className="p-4" style={{ background: C.surfaceWarm }}>
-            <div className="flex items-center gap-2">
-              <Sparkles size={18} color={C.gold} />
-              <span className="ff-display" style={{ color: C.ink, fontWeight: 600, fontSize: 15 }}>{fmt(extra)} extra this month</span>
-            </div>
-            <div className="ff-body mt-1 mb-3" style={{ color: C.muted, fontSize: 13 }}>A {bonusCount}-paycheck month gives you one full extra paycheck. Suggested split:</div>
-            <Row k="50% → extra debt payment" v={fmt(extra * 0.5)} color={C.coral} />
-            <Row k="30% → savings" v={fmt(extra * 0.3)} color={C.primary} />
-            <Row k="20% → fun money" v={fmt(extra * 0.2)} color={C.gold} />
-          </Card>
-        </>
-      )}
+  const bonusSection = (paycheckOptions.length > 1 && m === bonusCount) ? (
+    <>
+      <SectionTitle>Your bonus paycheck</SectionTitle>
+      <Card className="p-4" style={{ background: C.surfaceWarm }}>
+        <div className="flex items-center gap-2">
+          <Sparkles size={18} color={C.gold} />
+          <span className="ff-display" style={{ color: C.ink, fontWeight: 600, fontSize: 15 }}>{fmt(extra)} extra this month</span>
+        </div>
+        <div className="ff-body mt-1 mb-3" style={{ color: C.muted, fontSize: 13 }}>A {bonusCount}-paycheck month gives you one full extra paycheck. Suggested split:</div>
+        <Row k="50% → extra debt payment" v={fmt(extra * 0.5)} color={C.coral} />
+        <Row k="30% → savings" v={fmt(extra * 0.3)} color={C.primary} />
+        <Row k="20% → fun money" v={fmt(extra * 0.2)} color={C.gold} />
+      </Card>
+    </>
+  ) : null;
+
+  // Desktop: the budget-vs-actual table sits beside the monthly summary + bonus card.
+  if (isDesktop) {
+    return (
+      <div className="pb-2">
+        {toggle}
+        <div style={{ display: "grid", gridTemplateColumns: "1.3fr 1fr", gap: 20, alignItems: "start" }}>
+          <div>{tableSection}</div>
+          <div>{summarySection}{bonusSection}</div>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="px-4 pb-2">
+      {toggle}
+      {tableSection}
+      {summarySection}
+      {bonusSection}
     </div>
   );
 }
@@ -652,12 +791,12 @@ function PeriodDraftFields({ draft, setField }) {
 
       <div className="flex items-center justify-between py-1">
         <span className="ff-body" style={{ color: C.ink, fontSize: 14 }}>Income</span>
-        <NumInput value={draft.income} onChange={(v) => setField("income", v)} />
+        <NumInput value={draft.income} onChange={(v) => setField("income", v)} ariaLabel="Income for this period" />
       </div>
       {GROUP_KEYS.map((k) => (
         <div key={k} className="flex items-center justify-between py-1">
           <span className="ff-body" style={{ color: C.ink, fontSize: 14 }}>{GROUP_META[k].label}</span>
-          <NumInput value={draft[k]} onChange={(v) => setField(k, v)} />
+          <NumInput value={draft[k]} onChange={(v) => setField(k, v)} ariaLabel={`${GROUP_META[k].label} total for this period`} />
         </div>
       ))}
 
@@ -669,7 +808,7 @@ function PeriodDraftFields({ draft, setField }) {
   );
 }
 
-function AnnualScreen({ state, calc, setState }) {
+function AnnualScreen({ state, calc, setState, isDesktop }) {
   const freq = state.payFrequency || "biweekly";
   const periodsPerYear = freq === "weekly" ? 52 : freq === "job" ? 12 : 26;
   const weeksPerPeriod = freq === "weekly" ? 1 : freq === "job" ? 52 / 12 : 2;
@@ -680,11 +819,23 @@ function AnnualScreen({ state, calc, setState }) {
   const useTrailingAvg = freq === "job" && recentJobHistory.length > 0;
   const avg = (key) => recentJobHistory.reduce((a, h) => a + h[key], 0) / recentJobHistory.length;
 
-  const baseNet = useTrailingAvg ? avg("netProfit") : calc.netProfit;
+  // Projection basis: a trailing average of real saved periods when we have them
+  // ("by the job"), otherwise the plan (committed expenses) — never the in-flight
+  // period's raw partial actuals, which mid-period would project e.g. one logged
+  // coffee × 26. baseNet is derived as income − expenses so the trailing and plan
+  // paths stay consistent (avg is linear, so this equals avg(netProfit)).
   const baseIncome = useTrailingAvg ? avg("income") : calc.incomeBudget;
-  const baseExp = useTrailingAvg ? avg("totalExpenses") : (calc.anyActual ? calc.spentSoFar : calc.expenseBudget);
+  const baseExp = useTrailingAvg ? avg("totalExpenses") : calc.committedExpenses;
+  const baseNet = baseIncome - baseExp;
+  const savingsPerPeriod = useTrailingAvg ? avg("savings") : calc.groupBudget.savings;
   const annualIncome = baseIncome * periodsPerYear, annualExp = baseExp * periodsPerYear, annualNet = baseNet * periodsPerYear;
-  const extraPerYear = num(state.income.find((i) => i.id === "inc_bonus")?.amount) * periodsPerYear;
+  const annualSavings = savingsPerPeriod * periodsPerYear;
+  // Extra income from the "bonus" paychecks a year — the 26-vs-24 (biweekly) or
+  // 52-vs-48 (weekly) gap between pay periods and calendar months. Derived from the
+  // pay frequency, not read off a hard-coded seed income id that silently returns 0
+  // the moment the user deletes and re-adds their bonus line (new ids are timestamped).
+  const extraChecksPerYear = freq === "weekly" ? 4 : freq === "job" ? 0 : 2;
+  const extraPerYear = calc.incomeBudget * extraChecksPerYear;
 
   const proj = [
     { name: "Income", value: annualIncome, color: C.primary },
@@ -695,9 +846,9 @@ function AnnualScreen({ state, calc, setState }) {
   const milestones = [
     { label: "Projected annual net", value: fmt(annualNet), color: annualNet >= 0 ? C.primary : C.coral },
     { label: "Monthly avg profit", value: fmt(annualNet / 12) },
-    { label: "Weeks to $500 fund", value: baseNet > 0 ? Math.ceil(500 / baseNet * weeksPerPeriod) + " wks" : "—" },
-    { label: "Years to $10k saved", value: annualNet > 0 ? (10000 / annualNet).toFixed(1) + " yrs" : "—" },
-    { label: "Extra money / year", value: fmt(extraPerYear) },
+    { label: "Weeks to $500 fund", value: savingsPerPeriod > 0 ? Math.ceil(500 / savingsPerPeriod * weeksPerPeriod) + " wks" : "—" },
+    { label: "Years to $10k saved", value: annualSavings > 0 ? (10000 / annualSavings).toFixed(1) + " yrs" : "—" },
+    { label: "Bonus pay / year", value: fmt(extraPerYear) },
     { label: "Bonus paycheck value", value: fmt(calc.incomeBudget) },
   ];
 
@@ -708,7 +859,7 @@ function AnnualScreen({ state, calc, setState }) {
     netProfit: h.netProfit,
     savingsRate: h.income ? h.savings / h.income : 0,
   }));
-  const deletePeriod = (id) => setState((s) => ({ ...s, history: s.history.filter((h) => h.id !== id) }));
+  const deletePeriod = (id) => setState((s) => ({ ...s, history: normalizeHistory(s.history.filter((h) => h.id !== id)) }));
 
   // edit an existing saved period in place — recompute its expense/net totals from
   // the edited category values so the same invariants hold as a freshly-saved one
@@ -724,13 +875,14 @@ function AnnualScreen({ state, calc, setState }) {
   const saveEdit = () => {
     setState((s) => ({
       ...s,
-      history: s.history.map((h) => {
+      // Editing a pay date can reorder history, so re-normalize (sort + renumber).
+      history: normalizeHistory(s.history.map((h) => {
         if (h.id !== editingId) return h;
         const c = {};
         GROUP_KEYS.forEach((k) => { c[k] = num(editDraft[k]); });
         const totalExpenses = GROUP_KEYS.reduce((a, k) => a + c[k], 0);
         return { ...h, payDate: editDraft.payDate, income: num(editDraft.income), ...c, totalExpenses, netProfit: num(editDraft.income) - totalExpenses };
-      }),
+      })),
     }));
     cancelEdit();
   };
@@ -748,21 +900,21 @@ function AnnualScreen({ state, calc, setState }) {
   const draftNet = num(draft.income) - draftExpenses;
   const addPeriod = () => {
     setState((s) => {
-      const n = (s.history.length ? Math.max(...s.history.map((h) => h.periodNumber)) : 0) + 1;
       const c = {};
       GROUP_KEYS.forEach((k) => { c[k] = num(draft[k]); });
       const snap = {
-        id: "p_" + Date.now(), periodNumber: n, payDate: draft.payDate,
+        id: "p_" + Date.now(), periodNumber: nextPeriodNumber(s.history), payDate: draft.payDate,
         income: num(draft.income), ...c, totalExpenses: draftExpenses, netProfit: draftNet,
       };
-      return { ...s, history: [...s.history, snap] };
+      // normalizeHistory slots a back-filled past period into date order and renumbers.
+      return { ...s, history: normalizeHistory([...s.history, snap]) };
     });
     setDraft(emptyDraft());
     setAdding(false);
   };
 
-  return (
-    <div className="px-4 pb-2">
+  const projectionSection = (
+    <>
       <SectionTitle>Annual projection</SectionTitle>
       <div className="ff-body px-1 mb-2" style={{ color: C.muted, fontSize: 12 }}>
         {useTrailingAvg
@@ -778,23 +930,27 @@ function AnnualScreen({ state, calc, setState }) {
           </Suspense>
         </div>
       </Card>
+    </>
+  );
 
-      {trendData.length >= 2 && (
-        <>
-          <SectionTitle>Your trend</SectionTitle>
-          <Card data-tour="trends" className="p-4">
-            <div style={{ height: 180 }}>
-              <Suspense fallback={<ChartSkeleton />}>
-                <TrendChart data={trendData} />
-              </Suspense>
-            </div>
-            <div className="ff-body mt-1" style={{ color: C.muted, fontSize: 12 }}>
-              Net profit and savings rate over your last {trendData.length} saved periods.
-            </div>
-          </Card>
-        </>
-      )}
+  const trendSection = trendData.length >= 2 ? (
+    <>
+      <SectionTitle>Your trend</SectionTitle>
+      <Card data-tour="trends" className="p-4">
+        <div style={{ height: 180 }}>
+          <Suspense fallback={<ChartSkeleton />}>
+            <TrendChart data={trendData} />
+          </Suspense>
+        </div>
+        <div className="ff-body mt-1" style={{ color: C.muted, fontSize: 12 }}>
+          Net profit and savings rate over your last {trendData.length} saved periods.
+        </div>
+      </Card>
+    </>
+  ) : null;
 
+  const milestonesSection = (
+    <>
       <SectionTitle>Milestones</SectionTitle>
       <div data-tour="milestones" className="grid grid-cols-2 gap-3">
         {milestones.map((mi, i) => (
@@ -804,7 +960,11 @@ function AnnualScreen({ state, calc, setState }) {
           </Card>
         ))}
       </div>
+    </>
+  );
 
+  const historySection = (
+    <>
       <div data-tour="history">
         <SectionTitle right={<button onClick={() => setAdding((a) => !a)} style={{ color: C.primary }}><Plus size={18} /></button>}>Pay period history</SectionTitle>
       </div>
@@ -868,6 +1028,27 @@ function AnnualScreen({ state, calc, setState }) {
           </div>
         </Card>
       )}
+    </>
+  );
+
+  // Desktop: charts + milestones on the left, the pay-period history on the right.
+  if (isDesktop) {
+    return (
+      <div className="pb-2">
+        <div style={{ display: "grid", gridTemplateColumns: "1.05fr 1fr", gap: 24, alignItems: "start" }}>
+          <div>{projectionSection}{trendSection}{milestonesSection}</div>
+          <div>{historySection}</div>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="px-4 pb-2">
+      {projectionSection}
+      {trendSection}
+      {milestonesSection}
+      {historySection}
     </div>
   );
 }
@@ -918,7 +1099,17 @@ function downloadFile(filename, content, type) {
 
 function exportJson(state) {
   const stamp = new Date().toISOString().slice(0, 10);
-  downloadFile(`biweekly-budget-backup-${stamp}.json`, JSON.stringify(state, null, 2), "application/json");
+  // Don't write the soft-lock PIN into a file the user might email or drop in cloud
+  // storage — a shared backup shouldn't carry it. They re-set it on import if wanted.
+  const safe = { ...state, settings: { ...state.settings, pin: "" } };
+  downloadFile(`biweekly-budget-backup-${stamp}.json`, JSON.stringify(safe, null, 2), "application/json");
+}
+
+// Wrap a CSV field in quotes (escaping embedded quotes) when it contains a comma,
+// quote, or newline — so a category label like "Food, dining" can't shift columns.
+function csvCell(v) {
+  const s = String(v ?? "");
+  return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
 }
 
 function exportHistoryCsv(state) {
@@ -926,14 +1117,14 @@ function exportHistoryCsv(state) {
   const rows = state.history.map((h) => [
     h.periodNumber, h.payDate, h.income, ...GROUP_KEYS.map((k) => h[k]), h.totalExpenses, h.netProfit,
   ]);
-  const csv = [headers, ...rows].map((r) => r.join(",")).join("\n");
+  const csv = [headers, ...rows].map((r) => r.map(csvCell).join(",")).join("\n");
   const stamp = new Date().toISOString().slice(0, 10);
   downloadFile(`biweekly-budget-history-${stamp}.csv`, csv, "text/csv");
 }
 
 function WelcomeSheet({ name, onClose, onStartTour }) {
   return (
-    <div className="fixed inset-0 flex items-end justify-center" style={{ background: "rgba(20,50,38,0.4)", zIndex: 70 }} onClick={onClose}>
+    <div className="fixed inset-0 flex items-end justify-center" style={{ background: C.overlay, zIndex: 70 }} onClick={onClose}>
       <div className="w-full rounded-t-3xl p-5" style={{ background: C.surface, maxWidth: 480, maxHeight: "90vh", overflowY: "auto" }} onClick={(e) => e.stopPropagation()}>
         <div className="flex justify-center mb-3">
           <span style={{ width: 40, height: 4, borderRadius: 2, background: C.border, display: "block" }} />
@@ -1008,9 +1199,9 @@ function SettingsSheet({ state, setState, onClose, onReset, onSyncNow, syncBusy,
         const parsed = JSON.parse(reader.result);
         if (!parsed || typeof parsed !== "object" || !Array.isArray(parsed.income)) throw new Error("not a backup file");
         if (window.confirm("Import this backup? It will replace all data currently on this device.")) {
-          // mergeAndRoll: heal missing fields + archive any period that ended
-          // while this backup sat on disk (same treatment as a cloud pull)
-          setState(mergeAndRoll(parsed));
+          // normalizeAndRoll: heal missing/corrupt fields, then archive any period
+          // that ended while this backup sat on disk (same treatment as a cloud pull)
+          setState(normalizeAndRoll(parsed));
         }
       } catch {
         window.alert("That file doesn't look like a valid backup.");
@@ -1020,7 +1211,7 @@ function SettingsSheet({ state, setState, onClose, onReset, onSyncNow, syncBusy,
   };
 
   return (
-    <div className="fixed inset-0 flex items-end justify-center" style={{ background: "rgba(20,50,38,0.4)", zIndex: 50 }} onClick={onClose}>
+    <div className="fixed inset-0 flex items-end justify-center" style={{ background: C.overlay, zIndex: 50 }} onClick={onClose}>
       <div className="w-full rounded-t-3xl p-5" style={{ background: C.surface, maxWidth: 480, maxHeight: "90vh", overflowY: "auto" }} onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center justify-between mb-3">
           <span className="ff-display" style={{ color: C.ink, fontSize: 18, fontWeight: 600 }}>Settings</span>
@@ -1034,10 +1225,10 @@ function SettingsSheet({ state, setState, onClose, onReset, onSyncNow, syncBusy,
 
         <div data-tour="goal-fields">
           <label className="ff-body block" style={{ color: C.muted, fontSize: 12 }}>Savings goal (per pay period)</label>
-          <div className="mt-1 mb-4"><NumInput value={state.goal} onChange={(v) => setState((s) => ({ ...s, goal: v }))} align="left" /></div>
+          <div className="mt-1 mb-4"><NumInput value={state.goal} onChange={(v) => setState((s) => ({ ...s, goal: v }))} align="left" ariaLabel="Savings goal per pay period" /></div>
 
           <label className="ff-body block" style={{ color: C.muted, fontSize: 12 }}>Savings rate goal</label>
-          <div className="mt-1 mb-4"><PercentInput value={state.savingsRateGoal} onChange={(v) => setState((s) => ({ ...s, savingsRateGoal: v }))} /></div>
+          <div className="mt-1 mb-4"><PercentInput value={state.savingsRateGoal} onChange={(v) => setState((s) => ({ ...s, savingsRateGoal: v }))} ariaLabel="Savings rate goal percent" /></div>
         </div>
 
         <label className="ff-body block" style={{ color: C.muted, fontSize: 12 }}>Current period started</label>
@@ -1239,16 +1430,14 @@ function SettingsSheet({ state, setState, onClose, onReset, onSyncNow, syncBusy,
 }
 
 /* ============================== root ============================== */
-// Merge a saved/pulled/imported blob over the defaults, so old saves that
-// predate newer fields (locks, income override, payFrequency, …) stay valid.
-const mergeSaved = (saved) => ({ ...DEFAULT_STATE, ...saved, settings: { ...DEFAULT_STATE.settings, ...(saved.settings || {}) } });
-// Same, but also archive any pay period that ended while that data was away —
-// a budget pulled from the cloud (sign-in, Sync now) or imported from a backup
-// may hold a period that's already over, and it should roll just like a local one.
-const mergeAndRoll = (saved) => {
-  const merged = mergeSaved(saved);
-  const rolled = autoRollover(merged);
-  return rolled ? rolled.next : merged;
+// normalizeState (defaults.js) repairs a saved/pulled/imported blob's shape. This
+// also archives any pay period that ended while that data was away — a budget
+// pulled from the cloud (sign-in, Sync now) or imported from a backup may hold a
+// period that's already over, and it should roll just like a local one does.
+const normalizeAndRoll = (saved) => {
+  const normalized = normalizeState(saved);
+  const rolled = autoRollover(normalized);
+  return rolled ? rolled.next : normalized;
 };
 
 const SCREENS = [
@@ -1258,6 +1447,62 @@ const SCREENS = [
   { id: "monthly", label: "Monthly", icon: CalendarDays },
   { id: "annual", label: "Annual", icon: TrendingUp },
 ];
+
+/* ===== desktop shell (≥1024px): left sidebar rail + wide multi-column content =====
+   Shares every screen component and all state with the mobile shell — only the
+   chrome differs. Save + Settings keep their data-tour anchors so the Tour still
+   finds them here. */
+function Sidebar({ name, screen, setScreen, onSave, saveBusy, onOpenSettings, authUser, cloudOn }) {
+  return (
+    <aside style={{ width: 248, flexShrink: 0, height: "100vh", position: "sticky", top: 0, background: C.surface, borderRight: `1px solid ${C.border}`, display: "flex", flexDirection: "column", padding: "22px 14px" }}>
+      <div className="px-2 mb-5">
+        <div className="ff-display" style={{ color: C.ink, fontSize: 19, fontWeight: 700, lineHeight: 1.15 }}>Bi-Weekly Budget</div>
+        <div className="ff-body" style={{ color: C.muted, fontSize: 13, marginTop: 2 }}>{name ? `Hi, ${name}` : "Your money"}</div>
+      </div>
+      <nav className="flex flex-col gap-1">
+        {SCREENS.map((s) => {
+          const I = s.icon, active = screen === s.id;
+          return (
+            <button key={s.id} onClick={() => setScreen(s.id)}
+              className="flex items-center gap-3 rounded-xl px-3 py-2.5 ff-body text-left"
+              style={{ background: active ? C.primary : "transparent", color: active ? "#fff" : C.inkSoft, fontWeight: active ? 600 : 500, fontSize: 14.5 }}>
+              <I size={19} color={active ? "#fff" : C.muted} strokeWidth={active ? 2.4 : 2} style={{ flexShrink: 0 }} />
+              {s.label}
+            </button>
+          );
+        })}
+      </nav>
+      <div className="mt-auto flex flex-col gap-2 pt-4">
+        {cloudOn && <AccountBanner authUser={authUser} cloudOn={cloudOn} onManage={onOpenSettings} />}
+        <div className="flex gap-2">
+          <button data-tour="save-button" onClick={onSave} disabled={saveBusy}
+            className="flex-1 flex items-center justify-center gap-1.5 rounded-xl py-2.5" style={{ background: C.primary, color: "#fff", opacity: saveBusy ? 0.6 : 1 }}>
+            <Save size={15} /> <span className="ff-body" style={{ fontWeight: 600, fontSize: 13 }}>{saveBusy ? "Saving…" : "Save"}</span>
+          </button>
+          <button data-tour="settings-gear" onClick={onOpenSettings} aria-label="Settings"
+            className="rounded-xl p-2.5" style={{ background: C.bg, border: `1px solid ${C.border}`, color: C.inkSoft }}>
+            <Settings size={18} />
+          </button>
+        </div>
+      </div>
+    </aside>
+  );
+}
+
+function DesktopShell({ title, name, screen, setScreen, onSave, saveBusy, onOpenSettings, authUser, cloudOn, children }) {
+  return (
+    <div className="app-root" style={{ minHeight: "100vh", display: "flex", alignItems: "flex-start" }}>
+      <Sidebar name={name} screen={screen} setScreen={setScreen} onSave={onSave} saveBusy={saveBusy}
+        onOpenSettings={onOpenSettings} authUser={authUser} cloudOn={cloudOn} />
+      <main className="flex-1" style={{ minWidth: 0 }}>
+        <div style={{ maxWidth: 1180, margin: "0 auto", padding: "28px 32px 72px" }}>
+          <h1 className="ff-display" style={{ color: C.ink, fontSize: 26, fontWeight: 700, marginBottom: 18 }}>{title}</h1>
+          {children}
+        </div>
+      </main>
+    </div>
+  );
+}
 
 export default function App() {
   const [state, setState] = useState(DEFAULT_STATE);
@@ -1277,7 +1522,7 @@ export default function App() {
   useEffect(() => {
     (async () => {
       const saved = await loadState();
-      if (saved) setState(mergeSaved(saved)); // rollover runs in its own effect below, with its toast
+      if (saved) setState(normalizeState(saved)); // rollover runs in its own effect below, with its toast
       setLoaded(true);
     })();
   }, []);
@@ -1321,7 +1566,9 @@ export default function App() {
         if (user.email) setLastEmail(user.email);
         const cloud = await pullCloud();
         if (cloud) {
-          setState(mergeAndRoll(cloud));
+          // A sign-in is authoritative regardless of timestamps (this account IS
+          // the data you're switching to), unlike "Sync now" below which compares.
+          setState(normalizeAndRoll(cloud));
           showToast("Your budget is synced to this account");
         } else {
           await saveState(stateRef.current);
@@ -1341,6 +1588,7 @@ export default function App() {
   }, [state.settings.darkMode, state.settings.theme]);
 
   const calc = useCalc(state);
+  const isDesktop = useIsDesktop(); // ≥1024px → sidebar + multi-column shell; below → mobile shell
 
   const showToast = (msg) => { setToast(msg); setTimeout(() => setToast(""), 2400); };
 
@@ -1348,26 +1596,28 @@ export default function App() {
   const goalTierRef = useRef(null);
   useEffect(() => {
     if (!loaded || num(state.goal) <= 0) return;
-    const tier = calc.goalRatioSavings >= 1 ? 2 : calc.goalRatioSavings >= 0.8 ? 1 : 0;
+    // Notify on REAL saved progress (logged savings), not the committed/planned
+    // figure — otherwise editing the budget up to the goal would fire "goal met".
+    const savedRatio = calc.groupActual.savings / num(state.goal);
+    const tier = savedRatio >= 1 ? 2 : savedRatio >= 0.8 ? 1 : 0;
     if (goalTierRef.current === null) { goalTierRef.current = tier; return; }
     if (tier > goalTierRef.current) {
       showToast(tier === 2 ? "🎉 Goal met — you set aside your full savings goal this period" : "Almost there — you're close to your savings goal");
     }
     goalTierRef.current = tier;
-  }, [loaded, calc.goalRatioSavings, state.goal]);
+  }, [loaded, calc.groupActual.savings, state.goal]);
 
   const savePeriod = useCallback(() => {
-    // Closing early means the cycle actually restarted (e.g. payday came sooner),
-    // so the next period starts today — not at the old period's scheduled end,
-    // which would put periodStart in the future and delay the next auto-rollover.
-    const today = new Date().toISOString().slice(0, 10);
     setState((s) => {
-      const n = (s.history.length ? Math.max(...s.history.map((h) => h.periodNumber)) : 0) + 1;
-      const snap = buildPeriodSnapshot(s, n, today);
+      const snap = buildPeriodSnapshot(s, nextPeriodNumber(s.history), new Date().toISOString().slice(0, 10));
       return {
-        ...s, history: [...s.history, snap],
+        ...s, history: normalizeHistory([...s.history, snap]),
         period: emptyPeriod(),
-        periodStart: today,
+        // Advance by a full cycle from the OLD start (not to today), so an early
+        // close still lands the next period on the real, regular payday schedule.
+        // cyclePosition's `upcoming` state (see format.js) displays this honestly
+        // ("Next period starts <date>") instead of wrapping it into a bogus day count.
+        periodStart: addDays(s.periodStart, advanceDaysFor(s.payFrequency)),
       };
     });
     showToast("Period saved to your Annual tracker");
@@ -1388,7 +1638,13 @@ export default function App() {
     run();
     const onVis = () => { if (document.visibilityState === "visible") run(); };
     document.addEventListener("visibilitychange", onVis);
-    return () => document.removeEventListener("visibilitychange", onVis);
+    // Also check periodically while the app stays open, so a period that ends with
+    // the tab in the foreground still rolls over without needing a blur/refocus.
+    const timer = setInterval(run, 3600000); // hourly
+    return () => {
+      document.removeEventListener("visibilitychange", onVis);
+      clearInterval(timer);
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [loaded]);
 
@@ -1396,20 +1652,30 @@ export default function App() {
   // cloud row immediately (rather than waiting on the debounced auto-save).
   const saveNow = useCallback(async () => {
     setSaveBusy(true);
-    await saveState(stateRef.current);
+    const { cloudSaved } = await saveState(stateRef.current);
     setSaveBusy(false);
-    showToast(supabaseConfigured() && authUser ? "Saved to your account" : "Saved on this device");
+    const wantsCloud = supabaseConfigured() && authUser;
+    showToast(wantsCloud
+      ? (cloudSaved ? "Saved to your account" : "Saved on this device — couldn't reach the cloud")
+      : "Saved on this device");
   }, [authUser]);
 
   const syncNow = useCallback(async () => {
     setSyncBusy(true);
     const cloud = await pullCloud();
-    if (cloud) {
-      setState(mergeAndRoll(cloud));
+    // Only adopt the cloud copy when it's genuinely newer than what this device
+    // last saved; otherwise a stale cloud row (e.g. edits made here while offline
+    // that never reached it) would overwrite newer local data. When local is
+    // newer, push it up instead so both ends converge on the latest.
+    const cloudNewer = cloud && (cloud._updatedAt || 0) > localUpdatedAt();
+    if (cloudNewer) {
+      setState(normalizeAndRoll(cloud));
       showToast("Pulled the latest from the cloud");
     } else {
-      await saveState(state);
-      showToast("Saved this device to the cloud");
+      const { cloudSaved } = await saveState(state);
+      showToast(cloudSaved
+        ? (cloud ? "This device had the latest — saved it up" : "Saved this device to the cloud")
+        : "Couldn't reach the cloud — saved on this device");
     }
     setSyncBusy(false);
   }, [state]);
@@ -1474,17 +1740,16 @@ export default function App() {
   }, []);
 
   const handleSignOut = useCallback(async () => {
-    // Flush the latest to this account's cloud while still signed in, then wipe
-    // the device so the next account to sign in restores its own data cleanly.
-    // If the flush didn't land (offline, server error), wiping would destroy the
-    // only copy of the unsynced changes — so ask before proceeding.
-    const { cloudOk } = await saveState(stateRef.current);
-    if (!cloudOk && !window.confirm(
-      "Couldn't back up your latest changes to your account (are you offline?). " +
-      "Sign out anyway? Unsynced changes on this device would be lost."
+    // Flush the latest to this account's cloud while still signed in. Only wipe the
+    // device once that write has actually landed — otherwise an offline sign-out
+    // would clearLocal() away the sole copy and restore a stale budget next login.
+    const { cloudSaved } = await saveState(stateRef.current);
+    if (!cloudSaved && !window.confirm(
+      "Couldn't save your latest changes to the cloud — you may be offline. " +
+      "Sign out anyway? Your changes stay saved on this device."
     )) return;
+    if (cloudSaved) clearLocal(); // cloud has the latest; next account starts clean
     await signOut();
-    clearLocal();
     window.location.reload();
   }, []);
 
@@ -1502,6 +1767,64 @@ export default function App() {
 
   const title = { home: state.settings.name ? `Hi, ${state.settings.name}` : "Your money", budget: "Budget", track: "Track spending", monthly: "Monthly", annual: "Annual" }[screen];
 
+  // One place the active screen is chosen, shared by both shells; isDesktop lets
+  // each screen switch to a multi-column layout on wide viewports.
+  const renderScreen = () => {
+    switch (screen) {
+      case "home": return <Dashboard state={state} calc={calc} setScreen={setScreen} authUser={authUser} cloudOn={supabaseConfigured()} onOpenSettings={() => setShowSettings(true)} isDesktop={isDesktop} />;
+      case "budget": return <BudgetScreen state={state} setState={setState} calc={calc} isDesktop={isDesktop} />;
+      case "track": return <TrackScreen state={state} setState={setState} calc={calc} onSavePeriod={savePeriod} isDesktop={isDesktop} />;
+      case "monthly": return <MonthlyScreen state={state} setState={setState} calc={calc} isDesktop={isDesktop} />;
+      case "annual": return <AnnualScreen state={state} calc={calc} setState={setState} isDesktop={isDesktop} />;
+      default: return null;
+    }
+  };
+
+  // Modals/overlays are position:fixed and self-center — shared by both shells.
+  const overlays = (
+    <>
+      {toast && (
+        <div className="fixed left-0 right-0 flex justify-center" style={{ bottom: "calc(100px + env(safe-area-inset-bottom, 0px))", zIndex: 60 }}>
+          <div className="ff-body flex items-center gap-2 px-4 py-2 rounded-full" style={{ background: C.ink, color: "#fff", fontSize: 13 }}>
+            <Check size={15} color={C.primaryBright} /> {toast}
+          </div>
+        </div>
+      )}
+      {showSettings && (
+        <SettingsSheet state={state} setState={setState} onClose={() => setShowSettings(false)} onReset={reset}
+          onSyncNow={syncNow} syncBusy={syncBusy}
+          authUser={authUser} authBusy={authBusy} authMessage={authMessage}
+          onSendMagicLink={sendMagicLink} onLogIn={logIn} onCreateAccount={createAccount} onSetPassword={setPassword} onSignOut={handleSignOut}
+          onStartTour={() => { setShowSettings(false); setTouring(true); }} />
+      )}
+      {!state.settings.hasSeenWelcome && (
+        <WelcomeSheet name={state.settings.name}
+          onClose={() => setState((s) => ({ ...s, settings: { ...s.settings, hasSeenWelcome: true } }))}
+          onStartTour={() => {
+            setState((s) => ({ ...s, settings: { ...s.settings, hasSeenWelcome: true } }));
+            setTouring(true);
+          }} />
+      )}
+      {touring && (
+        <TourOverlay screen={screen} setScreen={setScreen} showSettings={showSettings} setShowSettings={setShowSettings}
+          onFinish={() => setTouring(false)} />
+      )}
+    </>
+  );
+
+  if (isDesktop) {
+    return (
+      <>
+        <DesktopShell title={title} name={state.settings.name} screen={screen} setScreen={setScreen}
+          onSave={saveNow} saveBusy={saveBusy} onOpenSettings={() => setShowSettings(true)}
+          authUser={authUser} cloudOn={supabaseConfigured()}>
+          {renderScreen()}
+        </DesktopShell>
+        {overlays}
+      </>
+    );
+  }
+
   return (
     <div className="app-root" style={{ minHeight: "100vh", maxWidth: 480, margin: "0 auto", position: "relative" }}>
       <div className="flex items-center justify-between px-4 pt-4 pb-1">
@@ -1518,20 +1841,8 @@ export default function App() {
       </div>
 
       <div style={{ paddingBottom: "calc(92px + env(safe-area-inset-bottom, 0px))" }}>
-        {screen === "home" && <Dashboard state={state} calc={calc} setScreen={setScreen} authUser={authUser} cloudOn={supabaseConfigured()} onOpenSettings={() => setShowSettings(true)} />}
-        {screen === "budget" && <BudgetScreen state={state} setState={setState} calc={calc} />}
-        {screen === "track" && <TrackScreen state={state} setState={setState} calc={calc} onSavePeriod={savePeriod} />}
-        {screen === "monthly" && <MonthlyScreen state={state} setState={setState} calc={calc} />}
-        {screen === "annual" && <AnnualScreen state={state} calc={calc} setState={setState} />}
+        {renderScreen()}
       </div>
-
-      {toast && (
-        <div className="fixed left-0 right-0 flex justify-center" style={{ bottom: "calc(100px + env(safe-area-inset-bottom, 0px))", zIndex: 60 }}>
-          <div className="ff-body flex items-center gap-2 px-4 py-2 rounded-full" style={{ background: C.ink, color: "#fff", fontSize: 13 }}>
-            <Check size={15} color={C.primaryBright} /> {toast}
-          </div>
-        </div>
-      )}
 
       <div className="fixed left-0 right-0 bottom-0 flex justify-center" style={{ zIndex: 40 }}>
         <div className="flex w-full bottom-nav" style={{ maxWidth: 480 }}>
@@ -1547,27 +1858,7 @@ export default function App() {
         </div>
       </div>
 
-      {showSettings && (
-        <SettingsSheet state={state} setState={setState} onClose={() => setShowSettings(false)} onReset={reset}
-          onSyncNow={syncNow} syncBusy={syncBusy}
-          authUser={authUser} authBusy={authBusy} authMessage={authMessage}
-          onSendMagicLink={sendMagicLink} onLogIn={logIn} onCreateAccount={createAccount} onSetPassword={setPassword} onSignOut={handleSignOut}
-          onStartTour={() => { setShowSettings(false); setTouring(true); }} />
-      )}
-
-      {!state.settings.hasSeenWelcome && (
-        <WelcomeSheet name={state.settings.name}
-          onClose={() => setState((s) => ({ ...s, settings: { ...s.settings, hasSeenWelcome: true } }))}
-          onStartTour={() => {
-            setState((s) => ({ ...s, settings: { ...s.settings, hasSeenWelcome: true } }));
-            setTouring(true);
-          }} />
-      )}
-
-      {touring && (
-        <TourOverlay screen={screen} setScreen={setScreen} showSettings={showSettings} setShowSettings={setShowSettings}
-          onFinish={() => setTouring(false)} />
-      )}
+      {overlays}
     </div>
   );
 }

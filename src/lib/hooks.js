@@ -1,5 +1,28 @@
 import { useState, useEffect, useRef } from "react";
 
+// Reactive media-query match. Initializes synchronously from matchMedia so the
+// first render is already correct (no mobile→desktop flash on load), then keeps
+// updating live as the viewport crosses the query (resize, rotation).
+export function useMediaQuery(query) {
+  const read = () => (typeof window !== "undefined" && window.matchMedia ? window.matchMedia(query).matches : false);
+  const [matches, setMatches] = useState(read);
+  useEffect(() => {
+    const m = window.matchMedia(query);
+    const h = () => setMatches(m.matches);
+    h(); // resync in case the viewport changed between render and effect
+    m.addEventListener?.("change", h);
+    return () => m.removeEventListener?.("change", h);
+  }, [query]);
+  return matches;
+}
+
+// Desktop = wide viewport gets the sidebar + multi-column layout; below this the
+// app keeps its mobile shell untouched. 1024px keeps phones and portrait tablets
+// on the mobile layout (matches Tailwind's `lg` breakpoint).
+export function useIsDesktop() {
+  return useMediaQuery("(min-width: 1024px)");
+}
+
 export function useReducedMotion() {
   const [r, setR] = useState(false);
   useEffect(() => {

@@ -35,7 +35,7 @@ test("touch interactions work across the app on a touch-enabled mobile viewport"
 
   // tap a NumInput on Budget and type into it via touch
   await page.getByRole("button", { name: "Budget", exact: true }).tap();
-  const firstAmountInput = page.locator('input[type="number"]').first();
+  const firstAmountInput = page.locator('input[inputmode="decimal"]').first();
   await firstAmountInput.tap();
   await firstAmountInput.fill("777");
   await expect(firstAmountInput).toHaveValue("777");

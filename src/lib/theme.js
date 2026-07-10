@@ -14,6 +14,8 @@ export const C = {
   border: "var(--border)",
   surfaceWarm: "var(--surface-warm)",
   surfaceDanger: "var(--surface-danger)",
+  heroGradient: "var(--hero-gradient)", // Home "runway" gauge background, themed per skin
+  overlay: "var(--overlay)",            // modal/sheet backdrop scrim, themed per skin
 };
 
 // Fun visual themes (colors, fonts, and accent shapes — see index.css).

@@ -1,3 +1,7 @@
+import { GROUP_KEYS } from "./theme.js";
+import { num } from "./format.js";
+import { normalizeHistory } from "./period.js";
+
 // Starter state. These dollar amounts are just placeholders carried over from
 // the original Excel — the user overwrites them on the Budget screen.
 // All category totals are computed as the sum of their line items (see calc.js),
@@ -59,3 +63,57 @@ export const DEFAULT_STATE = {
   monthlyActual: { housing: 0, food: 0, transport: 0, debt: 0, savings: 0, personal: 0 },
   history: [],
 };
+
+const isObj = (v) => v !== null && typeof v === "object" && !Array.isArray(v);
+const cloneDefault = (v) => JSON.parse(JSON.stringify(v));
+
+/**
+ * Turn any parsed/loaded blob into a state object that is always safe to feed to
+ * computeCalc and period.js — every group has a `lines` array, `period` has its
+ * sub-objects, and settings/monthlyActual carry their keys. A partial, older, or
+ * corrupt save (from a JSON import, a cloud pull, or localStorage) is repaired to
+ * the current shape instead of white-screening a screen that reads, e.g.,
+ * `state.groups[k].lines` directly. Unknown keys are preserved (forward-compatible);
+ * non-object line/history entries are dropped so a stray null can't crash a render.
+ */
+export function normalizeState(raw) {
+  const base = isObj(raw) ? raw : {};
+
+  const rawGroups = isObj(base.groups) ? base.groups : {};
+  const groups = {};
+  GROUP_KEYS.forEach((k) => {
+    const lines = rawGroups[k]?.lines;
+    groups[k] = { lines: Array.isArray(lines) ? lines.filter(isObj) : cloneDefault(DEFAULT_STATE.groups[k].lines) };
+  });
+
+  const p = isObj(base.period) ? base.period : {};
+  const period = {
+    week1: isObj(p.week1) ? p.week1 : {},
+    week2: isObj(p.week2) ? p.week2 : {},
+    cogs: { materials: num(p.cogs?.materials), labor: num(p.cogs?.labor), shipping: num(p.cogs?.shipping) },
+    cogsOn: !!p.cogsOn,
+    incomeOverrideOn: !!p.incomeOverrideOn,
+    incomeOverride: num(p.incomeOverride),
+    locks: {
+      week1: isObj(p.locks?.week1) ? p.locks.week1 : {},
+      week2: isObj(p.locks?.week2) ? p.locks.week2 : {},
+    },
+  };
+
+  const monthlyActual = {};
+  GROUP_KEYS.forEach((k) => { monthlyActual[k] = num(base.monthlyActual?.[k]); });
+
+  const settings = { ...DEFAULT_STATE.settings, ...(isObj(base.settings) ? base.settings : {}) };
+  if (typeof settings.pin !== "string") settings.pin = ""; // read as pin.length at the lock gate
+
+  return {
+    ...DEFAULT_STATE,
+    ...base,
+    settings,
+    income: Array.isArray(base.income) ? base.income.filter(isObj) : cloneDefault(DEFAULT_STATE.income),
+    groups,
+    period,
+    monthlyActual,
+    history: normalizeHistory(Array.isArray(base.history) ? base.history.filter(isObj) : []),
+  };
+}

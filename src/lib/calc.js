@@ -47,10 +47,24 @@ export function computeCalc(state) {
   const incomeThisPeriod = state.period.incomeOverrideOn ? num(state.period.incomeOverride) : incomeBudget;
 
   const anyActual = spentSoFar > 0; // has any spending been logged this period
+
+  // "Committed" spend: for each category, the larger of what's budgeted and what's
+  // already been logged. The unlogged part of a category's budget is still coming
+  // this period (rent, bills, the rest of groceries), so logging a little can only
+  // reveal you're heading OVER a category — never under. The period's net-profit /
+  // money-left numbers are built on this, replacing the old cliff where logging one
+  // small actual collapsed expenses to just that amount and inflated net profit to
+  // an impossible high for the rest of the period.
+  const committedByGroup = {};
+  GROUP_KEYS.forEach((k) => { committedByGroup[k] = Math.max(groupActual[k], groupBudget[k]); });
+  const committedExpenses = GROUP_KEYS.reduce((a, k) => a + committedByGroup[k], 0);
+
   const grossProfit = incomeThisPeriod - cogs;
-  const netProfit = grossProfit - (anyActual ? spentSoFar : expenseBudget);
-  const periodLeftOver = incomeThisPeriod - (anyActual ? spentSoFar : expenseBudget);
-  const savedThisPeriod = anyActual ? groupActual.savings : groupBudget.savings;
+  const netProfit = grossProfit - committedExpenses;
+  const periodLeftOver = incomeThisPeriod - committedExpenses;
+  // Savings is pay-yourself-first (it comes out automatically first), so treat the
+  // plan as committed here too: show at least budgeted savings, more if logged more.
+  const savedThisPeriod = Math.max(groupActual.savings, groupBudget.savings);
   const ratio = expenseBudget ? spentSoFar / expenseBudget : 0;
 
   // goal tracker — all three bases the user can compare against their goals
@@ -75,11 +89,30 @@ export function computeCalc(state) {
   return {
     incomeBudget, groupBudget, expenseBudget, leftOverBudget, savingsRateBudget,
     lineActual, groupActual, spentSoFar, cogs, grossProfit, netProfit,
+    committedExpenses, committedByGroup,
     periodLeftOver, savedThisPeriod, ratio, anyActual, incomeThisPeriod,
     goalRatioSavings, goalRatioNetProfit, goalOnTrackSavings, goalOnTrackNetProfit,
     savingsRateThisPeriod, goalRatioSavingsRate, goalOnTrackSavingsRate,
     debtBalance, debtPaymentPerPeriod, debtPeriodsToPayoff,
   };
+}
+
+/**
+ * Spend-pace status key for the Home gauge and mascot. Combines two signals:
+ *  - absolute: over 100% of the full-period budget is always "over"; at/above 85%
+ *    is "close" at any point in the cycle.
+ *  - pace: once at least a quarter of the period has elapsed, spending more than
+ *    ~15 points ahead of the share of time gone by is "ahead" of pace.
+ * The quarter-period guard keeps front-loaded bills (rent on day 1) from reading
+ * as overspending before the period has really gotten going. `elapsedFraction` is
+ * day/cycleDays in [0,1], or null for "by the job" (no fixed cycle → time-blind,
+ * absolute thresholds only). Returns "over" | "close" | "ahead" | "ontrack".
+ */
+export function spendStatusKey(ratio, elapsedFraction) {
+  if (ratio > 1) return "over";
+  if (ratio >= 0.85) return "close";
+  if (elapsedFraction != null && elapsedFraction >= 0.25 && ratio > elapsedFraction + 0.15) return "ahead";
+  return "ontrack";
 }
 
 export function useCalc(state) {
