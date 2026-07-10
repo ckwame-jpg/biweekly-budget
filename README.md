@@ -63,9 +63,11 @@ Docs: https://docs.claude.com/en/docs/claude-code/overview
 5. In the Supabase dashboard: **Authentication → URL Configuration**, set the Site URL
    (and add a Redirect URL) to wherever you're running the app, e.g. `http://localhost:5173`
    or your deployed Vercel URL, so the sign-in email link comes back to the right place.
-6. Restart `npm run dev`. In the app: **gear → Cloud sync**, enter your email and tap
-   **Send magic link**. Click the link in your inbox, then do the same on your phone with
-   the same email to share one budget between devices.
+6. Restart `npm run dev`. In the app: **gear → Cloud sync**, enter your email and a
+   password, then tap **Create account** (first time) or **Log in**. Use the same
+   email + password on every device to share one budget. (A one-time email link is
+   available as a "forgot password" fallback for existing accounts — note Supabase's
+   built-in mailer only sends a few auth emails per hour.)
 
 > Rows are scoped to your signed-in user via Supabase Auth + row-level security
 > (see `supabase/schema.sql`) — no sync code to type or leak, matching Phase 3 in `CLAUDE.md`.
@@ -75,7 +77,8 @@ Docs: https://docs.claude.com/en/docs/claude-code/overview
 ## 4. Deploy to Vercel
 
 1. Push this folder to a GitHub repo.
-2. On [vercel.com](https://vercel.com): **New Project → import the repo.** Vite is detected automatically.
+2. On [vercel.com](https://vercel.com): **New Project → import the repo.** The included
+   `vercel.json` pins the Vite framework, build command, and SPA rewrites.
 3. Add the two `VITE_SUPABASE_*` env vars in the Vercel project settings (if using sync).
 4. Deploy. Open the URL on your phone → browser menu → **Add to Home Screen**.
 

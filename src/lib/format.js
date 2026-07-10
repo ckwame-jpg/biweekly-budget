@@ -1,4 +1,9 @@
-export const num = (v) => (typeof v === "number" && isFinite(v) ? v : 0);
+// Coerces numeric strings too (e.g. "1600" from a hand-edited/imported backup),
+// so a line that *displays* an amount always *counts* in the totals.
+export const num = (v) => {
+  if (typeof v === "string" && v.trim() !== "") v = Number(v);
+  return typeof v === "number" && isFinite(v) ? v : 0;
+};
 
 export const sumLines = (lines, pick = (l) => l.amount) =>
   lines.reduce((a, l) => a + num(pick(l)), 0);

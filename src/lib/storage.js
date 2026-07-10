@@ -44,17 +44,20 @@ async function readCloud() {
   } catch { return null; }
 }
 
+// Returns true only when the row actually landed in the cloud, so callers that
+// are about to destroy local data (sign-out) can tell whether it's safe.
 async function writeCloud(state) {
   const sb = await getSupabase();
   const user = await getUser();
-  if (!sb || !user) return;
+  if (!sb || !user) return false;
   try {
-    await sb.from("budget_state").upsert({
+    const { error } = await sb.from("budget_state").upsert({
       user_id: user.id,
       state,
       updated_at: new Date().toISOString(),
     });
-  } catch { /* offline — local copy still saved */ }
+    return !error;
+  } catch { return false; /* offline — local copy still saved */ }
 }
 
 /**
@@ -89,6 +92,6 @@ export function clearLocal() {
 export async function saveState(state) {
   const stamped = { ...state, _updatedAt: Date.now() };
   writeLS(stamped);
-  await writeCloud(stamped);
-  return stamped;
+  const cloudOk = await writeCloud(stamped);
+  return { cloudOk };
 }

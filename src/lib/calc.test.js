@@ -61,6 +61,14 @@ describe("computeCalc — budget totals", () => {
     const zeroIncome = withGroup(makeState(), "savings", [{ id: "s", amount: 250 }]);
     expect(computeCalc(zeroIncome).savingsRateBudget).toBe(0);
   });
+
+  it("counts numeric-string amounts from hand-edited/imported backups (not as 0)", () => {
+    let state = makeState({ income: [{ id: "i", amount: "1600" }] });
+    state = withGroup(state, "housing", [{ id: "h", amount: "600.50" }, { id: "u", amount: "junk" }]);
+    const c = computeCalc(state);
+    expect(c.incomeBudget).toBe(1600);
+    expect(c.groupBudget.housing).toBeCloseTo(600.5); // "junk" still safely counts as 0
+  });
 });
 
 describe("computeCalc — actual vs. budget switching", () => {

@@ -24,14 +24,15 @@ export const supabaseConfigured = () =>
   Boolean(import.meta.env.VITE_SUPABASE_URL && import.meta.env.VITE_SUPABASE_ANON_KEY);
 
 /**
- * Real auth (Phase 3, see CLAUDE.md): a magic link emailed to the user, no
- * password to manage. Signing in on two devices with the same email is what
- * links them — replacing the old "type the same sync code" model.
+ * One-time email sign-in link. Now the "forgot password" fallback for EXISTING
+ * accounts only — shouldCreateUser: false, so a mistyped address errors instead
+ * of silently spawning a fresh empty account (the original cause of the
+ * duplicate-account sync mixups). New accounts go through signUpWithPassword.
  */
 export async function signInWithEmail(email) {
   const sb = await getSupabase();
   if (!sb) return { error: new Error("Supabase is not configured") };
-  return sb.auth.signInWithOtp({ email, options: { shouldCreateUser: true } });
+  return sb.auth.signInWithOtp({ email, options: { shouldCreateUser: false } });
 }
 
 /**

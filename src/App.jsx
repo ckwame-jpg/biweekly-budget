@@ -11,7 +11,7 @@ import { TourOverlay } from "./components/Tour.jsx";
 import { DEFAULT_STATE } from "./lib/defaults.js";
 import { num, fmt, fmtSigned, pct, fmtDate, cyclePosition } from "./lib/format.js";
 import { useCalc } from "./lib/calc.js";
-import { cycleDaysFor, emptyPeriod, buildPeriodSnapshot, addDays, autoRollover } from "./lib/period.js";
+import { cycleDaysFor, emptyPeriod, buildPeriodSnapshot, autoRollover } from "./lib/period.js";
 import { useReducedMotion, useCountUp } from "./lib/hooks.js";
 import { loadState, saveState, pullCloud, clearLocal, getLastEmail, setLastEmail } from "./lib/storage.js";
 import { supabaseConfigured, signInWithEmail, signInWithPassword, signUpWithPassword, updatePassword, signOut, getUser, onAuthChange } from "./lib/supabase.js";
@@ -225,8 +225,6 @@ function GoalCard({ state, calc }) {
 }
 
 /* ============================== screens ============================== */
-// Cycle length in days for each pay frequency. "job" has no fixed cycle (0 = none).
-
 function Dashboard({ state, calc, setScreen, authUser, cloudOn, onOpenSettings }) {
   const reduced = useReducedMotion();
   const hero = useCountUp(calc.leftOverBudget, reduced);
@@ -551,7 +549,9 @@ function TrackScreen({ state, setState, calc, onSavePeriod }) {
         <ArrowDownToLine size={18} /> <span className="ff-body" style={{ fontWeight: 600, fontSize: 15 }}>Close this period now</span>
       </button>
       <div className="ff-body text-center mt-2 mb-1" style={{ color: C.muted, fontSize: 12 }}>
-        Pay periods save to your history automatically when they end. Use this only to close the current one early.
+        {(state.payFrequency || "biweekly") === "job"
+          ? "By-the-job budgets have no fixed schedule — tap this when the job wraps up to save it to your history."
+          : "Pay periods save to your history automatically when they end. Use this only to close the current one early."}
       </div>
     </div>
   );
@@ -737,8 +737,11 @@ function AnnualScreen({ state, calc, setState }) {
 
   // manually add a past period — e.g. one from before you started using the
   // app, or one you forgot to save at the time
-  const emptyDraft = () => ({ payDate: new Date().toISOString().slice(0, 10), income: 0,
-    housing: 0, food: 0, transport: 0, debt: 0, savings: 0, personal: 0 });
+  const emptyDraft = () => {
+    const d = { payDate: new Date().toISOString().slice(0, 10), income: 0 };
+    GROUP_KEYS.forEach((k) => { d[k] = 0; });
+    return d;
+  };
   const [adding, setAdding] = useState(false);
   const [draft, setDraft] = useState(emptyDraft);
   const draftExpenses = GROUP_KEYS.reduce((a, k) => a + num(draft[k]), 0);
@@ -828,7 +831,7 @@ function AnnualScreen({ state, calc, setState }) {
           <CalendarDays size={28} color={C.muted} style={{ margin: "0 auto 8px" }} />
           <div className="ff-body" style={{ color: C.ink, fontSize: 14, fontWeight: 600 }}>No periods logged yet</div>
           <div className="ff-body mt-1" style={{ color: C.muted, fontSize: 13 }}>
-            Enter your spending on the Track tab, then tap “Save this period” to start building your 26-period year.
+            Log spending on the Track tab — each pay period saves itself here when it ends, and your year builds up automatically.
           </div>
         </Card>
       ) : (
@@ -948,7 +951,7 @@ function WelcomeSheet({ name, onClose, onStartTour }) {
           <div className="flex gap-3">
             <Wallet size={18} color={C.primary} style={{ flexShrink: 0, marginTop: 2 }} />
             <div className="ff-body" style={{ color: C.ink, fontSize: 14 }}>
-              <b>Budget</b> — set what you make and plan to spend each pay period. This is the only place you type in numbers.
+              <b>Budget</b> — set what you make and plan to spend each pay period. The whole app calculates from here.
             </div>
           </div>
           <div className="flex gap-3">
@@ -1005,10 +1008,9 @@ function SettingsSheet({ state, setState, onClose, onReset, onSyncNow, syncBusy,
         const parsed = JSON.parse(reader.result);
         if (!parsed || typeof parsed !== "object" || !Array.isArray(parsed.income)) throw new Error("not a backup file");
         if (window.confirm("Import this backup? It will replace all data currently on this device.")) {
-          setState((s) => ({
-            ...DEFAULT_STATE, ...parsed,
-            settings: { ...DEFAULT_STATE.settings, ...(parsed.settings || {}) },
-          }));
+          // mergeAndRoll: heal missing fields + archive any period that ended
+          // while this backup sat on disk (same treatment as a cloud pull)
+          setState(mergeAndRoll(parsed));
         }
       } catch {
         window.alert("That file doesn't look like a valid backup.");
@@ -1031,7 +1033,7 @@ function SettingsSheet({ state, setState, onClose, onReset, onSyncNow, syncBusy,
           className="ff-body w-full rounded-xl px-3 py-2 mt-1 mb-4 outline-none" style={{ background: C.bg, border: `1px solid ${C.border}`, color: C.ink, fontSize: 15 }} />
 
         <div data-tour="goal-fields">
-          <label className="ff-body block" style={{ color: C.muted, fontSize: 12 }}>Bi-weekly savings goal</label>
+          <label className="ff-body block" style={{ color: C.muted, fontSize: 12 }}>Savings goal (per pay period)</label>
           <div className="mt-1 mb-4"><NumInput value={state.goal} onChange={(v) => setState((s) => ({ ...s, goal: v }))} align="left" /></div>
 
           <label className="ff-body block" style={{ color: C.muted, fontSize: 12 }}>Savings rate goal</label>
@@ -1237,6 +1239,18 @@ function SettingsSheet({ state, setState, onClose, onReset, onSyncNow, syncBusy,
 }
 
 /* ============================== root ============================== */
+// Merge a saved/pulled/imported blob over the defaults, so old saves that
+// predate newer fields (locks, income override, payFrequency, …) stay valid.
+const mergeSaved = (saved) => ({ ...DEFAULT_STATE, ...saved, settings: { ...DEFAULT_STATE.settings, ...(saved.settings || {}) } });
+// Same, but also archive any pay period that ended while that data was away —
+// a budget pulled from the cloud (sign-in, Sync now) or imported from a backup
+// may hold a period that's already over, and it should roll just like a local one.
+const mergeAndRoll = (saved) => {
+  const merged = mergeSaved(saved);
+  const rolled = autoRollover(merged);
+  return rolled ? rolled.next : merged;
+};
+
 const SCREENS = [
   { id: "home", label: "Home", icon: Home },
   { id: "budget", label: "Budget", icon: Wallet },
@@ -1263,7 +1277,7 @@ export default function App() {
   useEffect(() => {
     (async () => {
       const saved = await loadState();
-      if (saved) setState((d) => ({ ...DEFAULT_STATE, ...saved, settings: { ...DEFAULT_STATE.settings, ...(saved.settings || {}) } }));
+      if (saved) setState(mergeSaved(saved)); // rollover runs in its own effect below, with its toast
       setLoaded(true);
     })();
   }, []);
@@ -1307,7 +1321,7 @@ export default function App() {
         if (user.email) setLastEmail(user.email);
         const cloud = await pullCloud();
         if (cloud) {
-          setState((s) => ({ ...DEFAULT_STATE, ...cloud, settings: { ...DEFAULT_STATE.settings, ...(cloud.settings || {}) } }));
+          setState(mergeAndRoll(cloud));
           showToast("Your budget is synced to this account");
         } else {
           await saveState(stateRef.current);
@@ -1343,14 +1357,17 @@ export default function App() {
   }, [loaded, calc.goalRatioSavings, state.goal]);
 
   const savePeriod = useCallback(() => {
+    // Closing early means the cycle actually restarted (e.g. payday came sooner),
+    // so the next period starts today — not at the old period's scheduled end,
+    // which would put periodStart in the future and delay the next auto-rollover.
+    const today = new Date().toISOString().slice(0, 10);
     setState((s) => {
       const n = (s.history.length ? Math.max(...s.history.map((h) => h.periodNumber)) : 0) + 1;
-      const snap = buildPeriodSnapshot(s, n, new Date().toISOString().slice(0, 10));
-      const days = s.payFrequency === "weekly" ? 7 : s.payFrequency === "job" ? 30 : 14;
+      const snap = buildPeriodSnapshot(s, n, today);
       return {
         ...s, history: [...s.history, snap],
         period: emptyPeriod(),
-        periodStart: addDays(s.periodStart, days),
+        periodStart: today,
       };
     });
     showToast("Period saved to your Annual tracker");
@@ -1388,7 +1405,7 @@ export default function App() {
     setSyncBusy(true);
     const cloud = await pullCloud();
     if (cloud) {
-      setState((s) => ({ ...DEFAULT_STATE, ...cloud, settings: { ...DEFAULT_STATE.settings, ...(cloud.settings || {}) } }));
+      setState(mergeAndRoll(cloud));
       showToast("Pulled the latest from the cloud");
     } else {
       await saveState(state);
@@ -1401,8 +1418,16 @@ export default function App() {
     setAuthBusy(true);
     setAuthMessage("");
     const { error } = await signInWithEmail(email);
-    if (!error) setLastEmail(email); // remember it so this device always pre-fills the same address
-    setAuthMessage(error ? "Couldn't send that link — check the email and try again." : `Check ${email} for a sign-in link.`);
+    if (!error) {
+      setLastEmail(email); // remember it so this device always pre-fills the same address
+      setAuthMessage(`Check ${email} for a sign-in link.`);
+    } else if (/rate limit/i.test(error.message)) {
+      setAuthMessage("Too many sign-in emails were sent recently — wait an hour and try again, or log in with your password above.");
+    } else if (/signups not allowed/i.test(error.message)) {
+      setAuthMessage("No account exists with that email — check the spelling, or create one with a password above.");
+    } else {
+      setAuthMessage("Couldn't send that link — check the email and try again.");
+    }
     setAuthBusy(false);
   }, []);
 
@@ -1414,7 +1439,9 @@ export default function App() {
     setAuthMessage("");
     const { error } = await signInWithPassword(email, password);
     if (!error) setLastEmail(email);
-    else setAuthMessage(/invalid/i.test(error.message) ? "Wrong email or password. New here? Tap Create account." : error.message);
+    else if (/not confirmed/i.test(error.message)) setAuthMessage(`That account isn't confirmed yet — check ${email} for the confirmation link, then log in.`);
+    else if (/invalid/i.test(error.message)) setAuthMessage("Wrong email or password. New here? Tap Create account.");
+    else setAuthMessage(error.message);
     setAuthBusy(false);
   }, []);
 
@@ -1425,6 +1452,10 @@ export default function App() {
     const { data, error } = await signUpWithPassword(email, password);
     if (error) {
       setAuthMessage(/registered|exists/i.test(error.message) ? "That email already has an account — tap Log in instead." : error.message);
+    } else if (data?.user && Array.isArray(data.user.identities) && data.user.identities.length === 0) {
+      // Supabase obfuscates existing emails: signUp "succeeds" but returns a user
+      // with no identities and sends nothing. Don't claim an account was created.
+      setAuthMessage("That email already has an account — tap Log in instead (or use the one-time email link below).");
     } else {
       setLastEmail(email);
       // If the project requires email confirmation, there's no session yet.
@@ -1443,9 +1474,15 @@ export default function App() {
   }, []);
 
   const handleSignOut = useCallback(async () => {
-    // flush the latest to this account's cloud while still signed in, then wipe
-    // the device so the next account to sign in restores its own data cleanly
-    await saveState(stateRef.current);
+    // Flush the latest to this account's cloud while still signed in, then wipe
+    // the device so the next account to sign in restores its own data cleanly.
+    // If the flush didn't land (offline, server error), wiping would destroy the
+    // only copy of the unsynced changes — so ask before proceeding.
+    const { cloudOk } = await saveState(stateRef.current);
+    if (!cloudOk && !window.confirm(
+      "Couldn't back up your latest changes to your account (are you offline?). " +
+      "Sign out anyway? Unsynced changes on this device would be lost."
+    )) return;
     await signOut();
     clearLocal();
     window.location.reload();

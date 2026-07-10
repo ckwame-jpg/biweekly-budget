@@ -18,7 +18,7 @@ export const TOUR_STEPS = [
   { screen: "home", target: "quickactions", title: "Jump right in", text: "Log spending or edit your budget with one tap, right from Home." },
   { screen: "home", target: "donut", title: "Where it goes", text: "A breakdown of your planned spending by category — tap a slice for the exact number." },
   { screen: "home", target: "goalcard", title: "Goal tracking", text: "Your savings goal, net profit, and savings rate — all measured against your targets in one chart." },
-  { screen: "budget", target: "income-section", title: "Budget: Income", text: "Add every paycheck or income source here. This is the only place you type in numbers — everything else is calculated for you." },
+  { screen: "budget", target: "income-section", title: "Budget: Income", text: "Add every paycheck or income source here — it flows through Track, Monthly, and Annual automatically." },
   { screen: "budget", target: "category-section", title: "Expense categories", text: "Expenses are grouped into six categories. Add, rename, or delete any line item freely." },
   { screen: "track", target: "track-income", title: "Track: log as you go", text: "Your income carries over from the Budget tab automatically — here you just log what you actually spend." },
   { screen: "track", target: "track-summary", title: "Live summary", text: "Net profit and savings rate update in real time as you log actuals." },
@@ -28,7 +28,7 @@ export const TOUR_STEPS = [
   { screen: "annual", target: "annual-chart", title: "Annual projection", text: "Your current numbers, projected out across the whole year." },
   { screen: "annual", target: "trends", title: "Your trend", text: "Once you've saved a couple of periods, see your net profit and savings rate move over time." },
   { screen: "annual", target: "milestones", title: "Milestones", text: "Handy markers — weeks to a cushion, years to a savings target, and more." },
-  { screen: "annual", target: "history", title: "Pay period history", text: "Every saved period lives here. Edit a date, delete an entry, or manually add one from the past." },
+  { screen: "annual", target: "history", title: "Pay period history", text: "Every saved period lives here — added automatically when a period ends. Edit or delete any entry, or add one from the past." },
 ];
 
 export function TourOverlay({ screen, setScreen, showSettings, setShowSettings, onFinish }) {
