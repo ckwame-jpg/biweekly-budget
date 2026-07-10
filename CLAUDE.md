@@ -132,9 +132,9 @@ src/
     hooks.js           useReducedMotion, useCountUp, useMediaQuery, useIsDesktop
                        (matchMedia "(min-width: 1024px)", synchronous init — no flash)
     supabase.js        lazy client (dynamic import, code-split) + auth helpers:
-                       password login/signup/updatePassword, magic-link fallback
-                       (shouldCreateUser: false), signOut/getUser/onAuthChange;
-                       everything no-ops when env vars are absent
+                       signInWithPassword/signUpWithPassword/updatePassword,
+                       signOut/getUser/onAuthChange; everything no-ops when
+                       env vars are absent
     storage.js         localStorage + cloud sync scoped to the signed-in user; loadLocal()
                        is the synchronous first-paint read (no network/Supabase import) —
                        loadState() (local+cloud reconciled) is kept for callers that want
@@ -178,17 +178,12 @@ still archives right away instead of waiting for the next visibility/hourly chec
 
 ## Sync model (live: real auth + per-user RLS)
 A **live Supabase project is connected** (keys in `.env` locally and in Vercel env
-vars). Primary sign-in is **email + password** (`signInWithPassword` /
-`signUpWithPassword`, plus `updatePassword` so passwordless-era accounts can add
-one). The **fallback for "forgot password" is an emailed 6-digit code** (`sendCode`
-→ `signInWithEmail`, `verifyCode` → `verifyEmailCode`/`auth.verifyOtp`) — typing
-the CODE, not clicking the emailed link, is what completes sign-in *inside an
-installed home-screen app* (a link opens the browser instead and never reaches
-the app's session). `shouldCreateUser: false` on the code request — a typo'd
-email must error, not spawn a duplicate account (the original cause of a sync
-mixup). New accounts always go through `signUpWithPassword`. Rows in
-`budget_state` are keyed by `user_id` and scoped by RLS to `auth.uid()` (see
-`schema.sql`); signing in with the same email on two devices shares one budget.
+vars). **Email + password is the only sign-in method** (`signInWithPassword` /
+`signUpWithPassword`, plus `updatePassword` for changing it) — deliberately kept
+simple; there is no magic-link or emailed-code fallback (tried and removed —
+see Backlog). Rows in `budget_state` are keyed by `user_id` and scoped by RLS to
+`auth.uid()` (see `schema.sql`); signing in with the same email + password on
+two devices shares one budget.
 
 **First paint never waits on the cloud**: the initial-load effect reads
 `loadLocal()` synchronously (no network, no Supabase import) and renders
@@ -254,27 +249,33 @@ desktop state or logic.
 - Quality floor: responsive to ~360px wide, visible focus, respects reduced motion.
 
 ## Backlog
-Done: everything through Phase 3 — live Vercel deploy + live Supabase (password
-auth + emailed-code fallback that works inside an installed PWA, RLS), income
-auto-tracking with per-period override, automatic pay-period rollover into
-history (with immediate rollover on cloud pull/import), add/edit/delete history
-entries (kept sorted + renumbered), pay-frequency support, debt payoff estimate,
-trend chart, per-week line locks, committed-expenses math + time-aware spend
-pace, derived Monthly actuals, data-repair via `normalizeState`, instant first
-paint from local storage with background cloud reconciliation, timestamp-aware
-sync + safer sign-out, a distinct desktop/web layout (sidebar + multi-column,
-mobile untouched), interactive tour + welcome sheet, 6 extra themes with
-reactive mascots, dark mode, export/import (PIN stripped from exports),
-code-splitting (recharts + supabase-js lazy-loaded), Vitest suites
-(calc/period/defaults/format/storage) and a Playwright touch e2e.
+Done: everything through Phase 3 — live Vercel deploy + live Supabase (email +
+password auth only, RLS), income auto-tracking with per-period override,
+automatic pay-period rollover into history (with immediate rollover on cloud
+pull/import), add/edit/delete history entries (kept sorted + renumbered),
+pay-frequency support, debt payoff estimate, trend chart, per-week line locks,
+committed-expenses math + time-aware spend pace, derived Monthly actuals,
+data-repair via `normalizeState`, instant first paint from local storage with
+background cloud reconciliation, timestamp-aware sync + safer sign-out, a
+distinct desktop/web layout (sidebar + multi-column, mobile untouched),
+interactive tour + welcome sheet, 6 extra themes with reactive mascots, dark
+mode, export/import (PIN stripped from exports), code-splitting (recharts +
+supabase-js lazy-loaded), Vitest suites (calc/period/defaults/format/storage)
+and a Playwright touch e2e.
+
+Tried and removed: a magic-link email sign-in, then an emailed 6-digit-code
+variant (Supabase's built-in mailer caps at a few emails/hour, which kept
+causing "couldn't send" friction; a mistyped/missing template variable also
+meant codes sometimes didn't appear in the email at all). Decided to keep auth
+to email + password only rather than carry that fallback complexity — simpler
+to reason about and to support. Don't silently re-add a passwordless fallback;
+if reconsidered, it needs its own reliable email path (custom SMTP) first.
 
 Remaining / known limits:
 1. Cross-device sync round-trip still needs a real-inbox smoke test by the user
    (assistant can verify the send/UI flow but not receive on a real device/inbox).
-2. Supabase's built-in mailer allows only a few auth emails/hour — fine for
-   personal use; custom SMTP only if it ever becomes a real problem.
-3. The emailed-code sign-in requires the Supabase Magic Link email template to
-   include `{{ .Token }}` so the code actually appears in the email — a one-time
-   dashboard setting, not a code change.
-4. Debt payoff ignores interest by design; optional APR field if requested.
-5. App-store packaging (TWA/Capacitor) discussed, not wanted for now — it's a PWA.
+2. No password-reset flow currently exists (removed along with the code
+   fallback) — if a password is forgotten, reset it directly in the Supabase
+   dashboard (Authentication → Users) for now.
+3. Debt payoff ignores interest by design; optional APR field if requested.
+4. App-store packaging (TWA/Capacitor) discussed, not wanted for now — it's a PWA.

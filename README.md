@@ -60,14 +60,9 @@ Docs: https://docs.claude.com/en/docs/claude-code/overview
    VITE_SUPABASE_URL=https://YOUR-PROJECT.supabase.co
    VITE_SUPABASE_ANON_KEY=your-anon-key
    ```
-5. In the Supabase dashboard: **Authentication → URL Configuration**, set the Site URL
-   (and add a Redirect URL) to wherever you're running the app, e.g. `http://localhost:5173`
-   or your deployed Vercel URL, so the sign-in email link comes back to the right place.
-6. Restart `npm run dev`. In the app: **gear → Cloud sync**, enter your email and a
+5. Restart `npm run dev`. In the app: **gear → Cloud sync**, enter your email and a
    password, then tap **Create account** (first time) or **Log in**. Use the same
-   email + password on every device to share one budget. (A one-time email link is
-   available as a "forgot password" fallback for existing accounts — note Supabase's
-   built-in mailer only sends a few auth emails per hour.)
+   email + password on every device to share one budget.
 
 > Rows are scoped to your signed-in user via Supabase Auth + row-level security
 > (see `supabase/schema.sql`) — no sync code to type or leak, matching Phase 3 in `CLAUDE.md`.
