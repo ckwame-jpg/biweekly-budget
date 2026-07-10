@@ -14,7 +14,7 @@ import { useCalc, spendStatusKey } from "./lib/calc.js";
 import { cycleDaysFor, advanceDaysFor, nextPeriodNumber, normalizeHistory, monthlyActualsFromHistory, emptyPeriod, buildPeriodSnapshot, addDays, autoRollover } from "./lib/period.js";
 import { useReducedMotion, useCountUp, useIsDesktop } from "./lib/hooks.js";
 import { loadLocal, saveState, pullCloud, clearLocal, getLastEmail, setLastEmail, localUpdatedAt } from "./lib/storage.js";
-import { supabaseConfigured, signInWithEmail, signInWithPassword, signUpWithPassword, updatePassword, signOut, getUser, onAuthChange } from "./lib/supabase.js";
+import { supabaseConfigured, signInWithEmail, verifyEmailCode, signInWithPassword, signUpWithPassword, updatePassword, signOut, getUser, onAuthChange } from "./lib/supabase.js";
 
 // recharts is one of the two heaviest deps in the app (see CLAUDE.md backlog);
 // split into its own chunk and only fetched once a chart actually renders.
@@ -1177,11 +1177,13 @@ function WelcomeSheet({ name, onClose, onStartTour }) {
   );
 }
 
-function SettingsSheet({ state, setState, onClose, onReset, onSyncNow, syncBusy, authUser, authBusy, authMessage, onSendMagicLink, onLogIn, onCreateAccount, onSetPassword, onSignOut, onStartTour }) {
+function SettingsSheet({ state, setState, onClose, onReset, onSyncNow, syncBusy, authUser, authBusy, authMessage, onSendCode, onVerifyCode, onLogIn, onCreateAccount, onSetPassword, onSignOut, onStartTour }) {
   const [pinDraft, setPinDraft] = useState(state.settings.pin || "");
   const [emailDraft, setEmailDraft] = useState(getLastEmail());
   const [pwDraft, setPwDraft] = useState("");
-  const [showAuthExtra, setShowAuthExtra] = useState(false); // magic-link fallback (signed out) / set-password panel (signed in)
+  const [showAuthExtra, setShowAuthExtra] = useState(false); // set-password panel (signed in)
+  const [codeSent, setCodeSent] = useState(false); // passwordless: emailed-code entry (signed out)
+  const [codeDraft, setCodeDraft] = useState("");
   const cloudOn = supabaseConfigured();
 
   const handleImportFile = (e) => {
@@ -1317,14 +1319,29 @@ function SettingsSheet({ state, setState, onClose, onReset, onSyncNow, syncBusy,
                 {authMessage && (
                   <div className="ff-body mt-2" style={{ color: C.inkSoft, fontSize: 12 }}>{authMessage}</div>
                 )}
-                {showAuthExtra ? (
-                  <button onClick={() => onSendMagicLink(emailDraft)} disabled={authBusy || !emailDraft}
-                    className="ff-body w-full mt-2 rounded-xl py-2" style={{ background: C.surface, border: `1px dashed ${C.border}`, color: C.inkSoft, fontWeight: 600, fontSize: 12, opacity: authBusy || !emailDraft ? 0.6 : 1 }}>
-                    {authBusy ? "Sending…" : "Email me a one-time sign-in link instead"}
-                  </button>
+                {codeSent ? (
+                  <div className="mt-3 pt-3" style={{ borderTop: `1px solid ${C.border}` }}>
+                    <div className="ff-body" style={{ color: C.inkSoft, fontSize: 12, marginBottom: 6 }}>
+                      No password needed — enter the 6-digit code we emailed to <b style={{ color: C.ink }}>{emailDraft}</b>. Typing the code signs you in right here (no link to open).
+                    </div>
+                    <input value={codeDraft} inputMode="numeric" maxLength={6} placeholder="123456" autoComplete="one-time-code" aria-label="6-digit sign-in code"
+                      onChange={(e) => setCodeDraft(e.target.value.replace(/\D/g, "").slice(0, 6))}
+                      className="ff-num w-full rounded-xl px-3 py-2 outline-none tracking-widest" style={{ background: C.surface, border: `1px solid ${C.border}`, color: C.ink, fontSize: 18 }} />
+                    <div className="flex gap-2 mt-2">
+                      <button onClick={() => onVerifyCode(emailDraft, codeDraft)} disabled={authBusy || codeDraft.length < 6}
+                        className="flex-1 ff-body rounded-xl py-2" style={{ background: C.primary, color: "#fff", fontWeight: 600, fontSize: 13, opacity: authBusy || codeDraft.length < 6 ? 0.6 : 1 }}>
+                        {authBusy ? "Working…" : "Sign in with code"}
+                      </button>
+                      <button onClick={() => onSendCode(emailDraft)} disabled={authBusy || !emailDraft}
+                        className="ff-body rounded-xl py-2 px-3" style={{ background: C.surface, border: `1px solid ${C.border}`, color: C.inkSoft, fontWeight: 600, fontSize: 13, opacity: authBusy || !emailDraft ? 0.6 : 1 }}>
+                        Resend
+                      </button>
+                    </div>
+                  </div>
                 ) : (
-                  <button onClick={() => setShowAuthExtra(true)} className="ff-body w-full mt-2" style={{ color: C.muted, fontSize: 11, textDecoration: "underline" }}>
-                    Forgot password? Use a one-time email link
+                  <button onClick={() => { setCodeSent(true); onSendCode(emailDraft); }} disabled={authBusy || !emailDraft}
+                    className="ff-body w-full mt-2" style={{ color: C.muted, fontSize: 11, textDecoration: "underline", opacity: authBusy || !emailDraft ? 0.6 : 1 }}>
+                    Forgot password? Email me a 6-digit code instead
                   </button>
                 )}
               </>
@@ -1666,13 +1683,42 @@ export default function App() {
     setSyncBusy(false);
   }, [state]);
 
-  const sendMagicLink = useCallback(async (email) => {
+  // Email the user a one-time sign-in code (and link). They type the CODE below to
+  // sign in — which works inside an installed home-screen app, where the emailed
+  // link would otherwise open in the browser instead of the app.
+  const sendCode = useCallback(async (email) => {
     setAuthBusy(true);
     setAuthMessage("");
-    const { error } = await signInWithEmail(email);
-    if (!error) setLastEmail(email); // remember it so this device always pre-fills the same address
-    setAuthMessage(error ? "Couldn't send that link — check the email and try again." : `Check ${email} for a sign-in link.`);
-    setAuthBusy(false);
+    try {
+      const { error } = await signInWithEmail(email);
+      if (!error) setLastEmail(email); // remember it so this device always pre-fills the same address
+      setAuthMessage(error ? "Couldn't send the code — check the email and try again." : `We emailed a 6-digit code to ${email} — enter it below.`);
+    } catch {
+      setAuthMessage("Couldn't reach the server — check your connection and try again.");
+    } finally {
+      setAuthBusy(false); // never leave the button stuck on "Working…" if the network throws
+    }
+  }, []);
+
+  // Verify the emailed code. On success onAuthChange fires SIGNED_IN, which pulls
+  // this account's cloud budget — so there's nothing to do here but surface errors.
+  const verifyCode = useCallback(async (email, code) => {
+    setAuthBusy(true);
+    setAuthMessage("");
+    try {
+      const { error } = await verifyEmailCode(email, code);
+      if (!error) { setLastEmail(email); return; }
+      const m = error.message || "";
+      setAuthMessage(
+        /expired|invalid|token/i.test(m) ? "That code didn't work — it may have expired. Tap Resend for a new one."
+        : /fetch|network/i.test(m) ? "Couldn't reach the server — check your connection and try again."
+        : m
+      );
+    } catch {
+      setAuthMessage("Couldn't reach the server — check your connection and try again.");
+    } finally {
+      setAuthBusy(false);
+    }
   }, []);
 
   // Email + password login — works on any device (unlike the magic link, which
@@ -1766,7 +1812,7 @@ export default function App() {
         <SettingsSheet state={state} setState={setState} onClose={() => setShowSettings(false)} onReset={reset}
           onSyncNow={syncNow} syncBusy={syncBusy}
           authUser={authUser} authBusy={authBusy} authMessage={authMessage}
-          onSendMagicLink={sendMagicLink} onLogIn={logIn} onCreateAccount={createAccount} onSetPassword={setPassword} onSignOut={handleSignOut}
+          onSendCode={sendCode} onVerifyCode={verifyCode} onLogIn={logIn} onCreateAccount={createAccount} onSetPassword={setPassword} onSignOut={handleSignOut}
           onStartTour={() => { setShowSettings(false); setTouring(true); }} />
       )}
       {!state.settings.hasSeenWelcome && (
