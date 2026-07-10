@@ -84,9 +84,20 @@ export function localUpdatedAt() {
 }
 
 /**
+ * Synchronous local-only read for an instant first paint — no network and no
+ * Supabase SDK import on the critical path. The cloud copy is reconciled in the
+ * background afterward (see the initial-load effect in App.jsx).
+ */
+export function loadLocal() {
+  return readLS();
+}
+
+/**
  * Load best-available state. Reads local first (instant), then the signed-in
  * user's cloud row; whichever has the newer _updatedAt wins. Last-write-wins
- * is intentional for a single personal user across their own devices.
+ * is intentional for a single personal user across their own devices. Kept for
+ * callers that want the reconciled result in one await; the app's first paint
+ * uses loadLocal() + a background pullCloud() instead so it never waits on this.
  */
 export async function loadState() {
   const local = readLS();

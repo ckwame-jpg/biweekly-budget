@@ -135,9 +135,12 @@ src/
                        password login/signup/updatePassword, magic-link fallback
                        (shouldCreateUser: false), signOut/getUser/onAuthChange;
                        everything no-ops when env vars are absent
-    storage.js         localStorage + cloud sync scoped to the signed-in user; newerOf/
-                       localUpdatedAt for timestamp-aware sync; remembers last sign-in
-                       email; clearLocal on sign-out. Tested: storage.test.js.
+    storage.js         localStorage + cloud sync scoped to the signed-in user; loadLocal()
+                       is the synchronous first-paint read (no network/Supabase import) —
+                       loadState() (local+cloud reconciled) is kept for callers that want
+                       one awaited result; newerOf/localUpdatedAt for timestamp-aware sync;
+                       remembers last sign-in email; clearLocal on sign-out. Tested:
+                       storage.test.js.
 e2e/touch.spec.js      Playwright touch-event test (iPhone 13 profile)
 supabase/schema.sql    budget_state(user_id uuid pk references auth.users, state jsonb, updated_at),
                        RLS scoped to auth.uid() — see "Sync model" below
@@ -176,23 +179,33 @@ still archives right away instead of waiting for the next visibility/hourly chec
 ## Sync model (live: real auth + per-user RLS)
 A **live Supabase project is connected** (keys in `.env` locally and in Vercel env
 vars). Primary sign-in is **email + password** (`signInWithPassword` /
-`signUpWithPassword`, plus `updatePassword` so magic-link-era accounts can add
-one); the **magic-link email is the "forgot password" fallback only** and does
-NOT create accounts (`shouldCreateUser: false` — a typo must error, not spawn a
-duplicate account). Rows in `budget_state` are keyed by `user_id` and scoped by
-RLS to `auth.uid()` (see `schema.sql`); signing in with the same email on two
-devices shares one budget. On `SIGNED_IN` the cloud copy is pulled and loaded
-unconditionally (the account being switched to is authoritative, regardless of
-timestamps) via `normalizeAndRoll`. Initial `loadState()` and the manual **"Sync
-now"** button are last-write-wins by `_updatedAt` instead (`newerOf`/
-`localUpdatedAt` in `storage.js`) — "Sync now" only *adopts* the cloud copy when
-it's genuinely newer than this device's last save; otherwise it pushes local up,
-so a stale cloud row can't clobber newer offline edits. Sign-out flushes to the
-cloud first and only wipes local storage if that write is confirmed to have
-landed (`cloudSaved`) — otherwise it asks before proceeding, since wiping would
-destroy the only copy of unsynced changes. The last-used email is remembered per
-device and pre-filled. Supabase's built-in mailer is rate-limited to a few
-emails/hour — that's expected, not a bug.
+`signUpWithPassword`, plus `updatePassword` so passwordless-era accounts can add
+one). The **fallback for "forgot password" is an emailed 6-digit code** (`sendCode`
+→ `signInWithEmail`, `verifyCode` → `verifyEmailCode`/`auth.verifyOtp`) — typing
+the CODE, not clicking the emailed link, is what completes sign-in *inside an
+installed home-screen app* (a link opens the browser instead and never reaches
+the app's session). `shouldCreateUser: false` on the code request — a typo'd
+email must error, not spawn a duplicate account (the original cause of a sync
+mixup). New accounts always go through `signUpWithPassword`. Rows in
+`budget_state` are keyed by `user_id` and scoped by RLS to `auth.uid()` (see
+`schema.sql`); signing in with the same email on two devices shares one budget.
+
+**First paint never waits on the cloud**: the initial-load effect reads
+`loadLocal()` synchronously (no network, no Supabase import) and renders
+immediately, then reconciles the cloud in the background — adopting it (via
+`normalizeAndRoll`, so an already-ended period archives right away) only if it's
+newer than this device's last save (`localUpdatedAt`). On `SIGNED_IN` the cloud
+copy is pulled and loaded unconditionally instead (the account being switched to
+*is* authoritative, regardless of timestamps). The manual **"Sync now"** button
+uses the same newer-wins check as the background reconcile (`newerOf`/
+`localUpdatedAt` in `storage.js`) — it only *adopts* the cloud copy when it's
+genuinely newer; otherwise it pushes local up, so a stale cloud row can't
+clobber newer offline edits. Sign-out flushes to the cloud first and only wipes
+local storage if that write is confirmed to have landed (`cloudSaved`) —
+otherwise it asks before proceeding, since wiping would destroy the only copy
+of unsynced changes. The last-used email is remembered per device and
+pre-filled. Supabase's built-in mailer is rate-limited to a few emails/hour —
+that's expected, not a bug.
 
 ## Design tokens
 - Colors are CSS custom properties (`--bg`, `--primary`, `--coral`, `--card-shadow`,
@@ -242,22 +255,26 @@ desktop state or logic.
 
 ## Backlog
 Done: everything through Phase 3 — live Vercel deploy + live Supabase (password
-auth + magic-link fallback, RLS), income auto-tracking with per-period override,
-automatic pay-period rollover into history (with immediate rollover on cloud
-pull/import), add/edit/delete history entries (kept sorted + renumbered),
-pay-frequency support, debt payoff estimate, trend chart, per-week line locks,
-committed-expenses math + time-aware spend pace, derived Monthly actuals,
-data-repair via `normalizeState`, timestamp-aware sync + safer sign-out, a
-distinct desktop/web layout (sidebar + multi-column, mobile untouched),
-interactive tour + welcome sheet, 6 extra themes with reactive mascots, dark
-mode, export/import (PIN stripped from exports), code-splitting (recharts +
-supabase-js lazy-loaded), Vitest suites (calc/period/defaults/format/storage)
-and a Playwright touch e2e.
+auth + emailed-code fallback that works inside an installed PWA, RLS), income
+auto-tracking with per-period override, automatic pay-period rollover into
+history (with immediate rollover on cloud pull/import), add/edit/delete history
+entries (kept sorted + renumbered), pay-frequency support, debt payoff estimate,
+trend chart, per-week line locks, committed-expenses math + time-aware spend
+pace, derived Monthly actuals, data-repair via `normalizeState`, instant first
+paint from local storage with background cloud reconciliation, timestamp-aware
+sync + safer sign-out, a distinct desktop/web layout (sidebar + multi-column,
+mobile untouched), interactive tour + welcome sheet, 6 extra themes with
+reactive mascots, dark mode, export/import (PIN stripped from exports),
+code-splitting (recharts + supabase-js lazy-loaded), Vitest suites
+(calc/period/defaults/format/storage) and a Playwright touch e2e.
 
 Remaining / known limits:
 1. Cross-device sync round-trip still needs a real-inbox smoke test by the user
-   (assistant can't complete an email sign-in).
+   (assistant can verify the send/UI flow but not receive on a real device/inbox).
 2. Supabase's built-in mailer allows only a few auth emails/hour — fine for
    personal use; custom SMTP only if it ever becomes a real problem.
-3. Debt payoff ignores interest by design; optional APR field if requested.
-4. App-store packaging (TWA/Capacitor) discussed, not wanted for now — it's a PWA.
+3. The emailed-code sign-in requires the Supabase Magic Link email template to
+   include `{{ .Token }}` so the code actually appears in the email — a one-time
+   dashboard setting, not a code change.
+4. Debt payoff ignores interest by design; optional APR field if requested.
+5. App-store packaging (TWA/Capacitor) discussed, not wanted for now — it's a PWA.
