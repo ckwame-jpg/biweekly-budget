@@ -24,14 +24,28 @@ export const supabaseConfigured = () =>
   Boolean(import.meta.env.VITE_SUPABASE_URL && import.meta.env.VITE_SUPABASE_ANON_KEY);
 
 /**
- * Real auth (Phase 3, see CLAUDE.md): a magic link emailed to the user, no
- * password to manage. Signing in on two devices with the same email is what
- * links them — replacing the old "type the same sync code" model.
+ * Passwordless sign-in: emails the user a one-time code (and, if the template
+ * keeps the link, a link too). Verify the code with verifyEmailCode() below.
+ * Entering the CODE — rather than clicking the link — is what makes this work
+ * inside an installed home-screen app, where the link would open in the browser
+ * instead of the app. Signing in with the same email on two devices links them.
  */
 export async function signInWithEmail(email) {
   const sb = await getSupabase();
   if (!sb) return { error: new Error("Supabase is not configured") };
   return sb.auth.signInWithOtp({ email, options: { shouldCreateUser: true } });
+}
+
+/**
+ * Complete a passwordless sign-in by verifying the 6-digit code from the email
+ * (paired with signInWithEmail). type "email" covers both a fresh signup and a
+ * returning login. On success the session is created right here in the app — no
+ * link, no browser hop — which is the whole point on an installed PWA.
+ */
+export async function verifyEmailCode(email, code) {
+  const sb = await getSupabase();
+  if (!sb) return { error: new Error("Supabase is not configured") };
+  return sb.auth.verifyOtp({ email, token: String(code).trim(), type: "email" });
 }
 
 /**
