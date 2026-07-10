@@ -133,8 +133,9 @@ src/
                        (matchMedia "(min-width: 1024px)", synchronous init — no flash)
     supabase.js        lazy client (dynamic import, code-split) + auth helpers:
                        signInWithPassword/signUpWithPassword/updatePassword,
-                       signOut/getUser/onAuthChange; everything no-ops when
-                       env vars are absent
+                       sendPasswordReset (fires a PASSWORD_RECOVERY auth event
+                       on redirect back), signOut/getUser/onAuthChange;
+                       everything no-ops when env vars are absent
     storage.js         localStorage + cloud sync scoped to the signed-in user; loadLocal()
                        is the synchronous first-paint read (no network/Supabase import) —
                        loadState() (local+cloud reconciled) is kept for callers that want
@@ -179,11 +180,26 @@ still archives right away instead of waiting for the next visibility/hourly chec
 ## Sync model (live: real auth + per-user RLS)
 A **live Supabase project is connected** (keys in `.env` locally and in Vercel env
 vars). **Email + password is the only sign-in method** (`signInWithPassword` /
-`signUpWithPassword`, plus `updatePassword` for changing it) — deliberately kept
-simple; there is no magic-link or emailed-code fallback (tried and removed —
-see Backlog). Rows in `budget_state` are keyed by `user_id` and scoped by RLS to
-`auth.uid()` (see `schema.sql`); signing in with the same email + password on
-two devices shares one budget.
+`signUpWithPassword`, plus `updatePassword` for changing it while signed in) —
+deliberately kept simple; there is no magic-link or emailed-code sign-in
+fallback (tried and removed — see Backlog). Rows in `budget_state` are keyed by
+`user_id` and scoped by RLS to `auth.uid()` (see `schema.sql`); signing in with
+the same email + password on two devices shares one budget.
+
+**Forgotten password**: `sendPasswordReset(email)` emails a reset link via
+Supabase's `resetPasswordForEmail`, `redirectTo: window.location.origin`.
+Unlike the removed sign-in code/link, a reset link is fine to open in a
+browser tab even outside the installed app — the user sets a new password
+there and then just logs into the installed app normally afterward; no
+session needs to transfer between browser and app. When the link's redirect
+lands back on this origin, the Supabase client parses the recovery token from
+the URL and fires a `PASSWORD_RECOVERY` event (`onAuthChange` in App.jsx),
+which shows `PasswordRecoveryScreen` (same render-priority tier as `PinLock`)
+instead of the normal app until `finishPasswordReset` sets the new password
+and pulls the account's cloud budget. Requires this app's origin(s) —
+localhost for dev, the Vercel URL for prod — to be allow-listed as Redirect
+URLs in the Supabase dashboard (Authentication → URL Configuration), or the
+reset link won't come back to the right place.
 
 **First paint never waits on the cloud**: the initial-load effect reads
 `loadLocal()` synchronously (no network, no Supabase import) and renders
@@ -256,12 +272,13 @@ pull/import), add/edit/delete history entries (kept sorted + renumbered),
 pay-frequency support, debt payoff estimate, trend chart, per-week line locks,
 committed-expenses math + time-aware spend pace, derived Monthly actuals,
 data-repair via `normalizeState`, instant first paint from local storage with
-background cloud reconciliation, timestamp-aware sync + safer sign-out, a
-distinct desktop/web layout (sidebar + multi-column, mobile untouched),
-interactive tour + welcome sheet, 6 extra themes with reactive mascots, dark
-mode, export/import (PIN stripped from exports), code-splitting (recharts +
-supabase-js lazy-loaded), Vitest suites (calc/period/defaults/format/storage)
-and a Playwright touch e2e.
+background cloud reconciliation, timestamp-aware sync + safer sign-out, an
+emailed password-reset link (safe to open in a browser even for the installed
+PWA — see Sync model), a distinct desktop/web layout (sidebar + multi-column,
+mobile untouched), interactive tour + welcome sheet, 6 extra themes with
+reactive mascots, dark mode, export/import (PIN stripped from exports),
+code-splitting (recharts + supabase-js lazy-loaded), Vitest suites
+(calc/period/defaults/format/storage) and a Playwright touch e2e.
 
 Tried and removed: a magic-link email sign-in, then an emailed 6-digit-code
 variant (Supabase's built-in mailer caps at a few emails/hour, which kept
@@ -272,10 +289,12 @@ to reason about and to support. Don't silently re-add a passwordless fallback;
 if reconsidered, it needs its own reliable email path (custom SMTP) first.
 
 Remaining / known limits:
-1. Cross-device sync round-trip still needs a real-inbox smoke test by the user
-   (assistant can verify the send/UI flow but not receive on a real device/inbox).
-2. No password-reset flow currently exists (removed along with the code
-   fallback) — if a password is forgotten, reset it directly in the Supabase
-   dashboard (Authentication → Users) for now.
+1. Cross-device sync and the password-reset link both still need a real-inbox
+   smoke test by the user (assistant can verify the send/UI flow and confirm
+   the request reaches Supabase cleanly, but can't click an emailed link).
+2. The password-reset redirect requires this app's origin(s) to be allow-listed
+   in Supabase (Authentication → URL Configuration → Redirect URLs) — if reset
+   links land on an error page instead of `PasswordRecoveryScreen`, check that
+   first.
 3. Debt payoff ignores interest by design; optional APR field if requested.
 4. App-store packaging (TWA/Capacitor) discussed, not wanted for now — it's a PWA.

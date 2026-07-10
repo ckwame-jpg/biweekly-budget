@@ -40,6 +40,22 @@ export async function signUpWithPassword(email, password) {
   return sb.auth.signUp({ email, password });
 }
 
+/**
+ * Email a password-reset link. Unlike the sign-in code/link this app dropped
+ * (which had to establish a session *inside the installed app*), a reset link
+ * is fine to open in the browser: it lands back on this app's own origin,
+ * which the Supabase client detects and turns into a PASSWORD_RECOVERY event
+ * (see onAuthChange below) — the user sets a new password right there, then
+ * simply logs into the installed app with it afterward. No app-session hop
+ * needed. Requires this origin to be an allow-listed Redirect URL in the
+ * Supabase dashboard (Authentication → URL Configuration).
+ */
+export async function sendPasswordReset(email) {
+  const sb = await getSupabase();
+  if (!sb) return { error: new Error("Supabase is not configured") };
+  return sb.auth.resetPasswordForEmail(email, { redirectTo: window.location.origin });
+}
+
 // Set/replace the password on the currently signed-in account.
 export async function updatePassword(password) {
   const sb = await getSupabase();
@@ -65,7 +81,9 @@ export function onAuthChange(callback) {
   let unsubscribe = () => {};
   getSupabase().then((sb) => {
     if (!sb || unsubscribed) return;
-    // event is "SIGNED_IN" | "SIGNED_OUT" | "INITIAL_SESSION" | "TOKEN_REFRESHED" | ...
+    // event is "SIGNED_IN" | "SIGNED_OUT" | "INITIAL_SESSION" | "TOKEN_REFRESHED" |
+    // "PASSWORD_RECOVERY" (fires once, right after a reset-link redirect lands
+    // back on this origin with a recovery token in the URL) | ...
     const { data } = sb.auth.onAuthStateChange((event, session) => callback(session?.user || null, event));
     unsubscribe = () => data.subscription.unsubscribe();
   });

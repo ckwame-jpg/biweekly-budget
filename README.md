@@ -60,9 +60,15 @@ Docs: https://docs.claude.com/en/docs/claude-code/overview
    VITE_SUPABASE_URL=https://YOUR-PROJECT.supabase.co
    VITE_SUPABASE_ANON_KEY=your-anon-key
    ```
-5. Restart `npm run dev`. In the app: **gear → Cloud sync**, enter your email and a
+5. In the Supabase dashboard: **Authentication → URL Configuration**, add every
+   origin you'll run the app from as a **Redirect URL** — e.g. `http://localhost:5173`
+   and your deployed Vercel URL. This is needed for the "forgot password" email
+   link to land back on the app instead of an error page.
+6. Restart `npm run dev`. In the app: **gear → Cloud sync**, enter your email and a
    password, then tap **Create account** (first time) or **Log in**. Use the same
-   email + password on every device to share one budget.
+   email + password on every device to share one budget. Forgot your password?
+   Tap **"Forgot password? Send a reset link"** — click the emailed link (opening
+   it in any browser is fine), set a new password, then log into the app with it.
 
 > Rows are scoped to your signed-in user via Supabase Auth + row-level security
 > (see `supabase/schema.sql`) — no sync code to type or leak, matching Phase 3 in `CLAUDE.md`.

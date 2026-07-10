@@ -14,7 +14,7 @@ import { useCalc, spendStatusKey } from "./lib/calc.js";
 import { cycleDaysFor, advanceDaysFor, nextPeriodNumber, normalizeHistory, monthlyActualsFromHistory, emptyPeriod, buildPeriodSnapshot, addDays, autoRollover } from "./lib/period.js";
 import { useReducedMotion, useCountUp, useIsDesktop } from "./lib/hooks.js";
 import { loadLocal, saveState, pullCloud, clearLocal, getLastEmail, setLastEmail, localUpdatedAt } from "./lib/storage.js";
-import { supabaseConfigured, signInWithPassword, signUpWithPassword, updatePassword, signOut, getUser, onAuthChange } from "./lib/supabase.js";
+import { supabaseConfigured, signInWithPassword, signUpWithPassword, updatePassword, sendPasswordReset, signOut, getUser, onAuthChange } from "./lib/supabase.js";
 
 // recharts is one of the two heaviest deps in the app (see CLAUDE.md backlog);
 // split into its own chunk and only fetched once a chart actually renders.
@@ -1086,6 +1086,30 @@ function PinLock({ pin, onUnlock }) {
   );
 }
 
+// Shown when a password-reset link redirects back here with a recovery session
+// (see the PASSWORD_RECOVERY branch in App()). Takes over the whole screen,
+// same as PinLock, since there's nothing else useful to show mid-recovery.
+function PasswordRecoveryScreen({ onSetPassword, authBusy, authMessage }) {
+  const [pw, setPw] = useState("");
+  return (
+    <div className="flex flex-col items-center justify-center px-6" style={{ minHeight: "100vh", background: C.bg }}>
+      <Lock size={28} color={C.primary} />
+      <div className="ff-display mt-3" style={{ color: C.ink, fontSize: 18, fontWeight: 600 }}>Set a new password</div>
+      <div className="ff-body mt-2 text-center" style={{ color: C.muted, fontSize: 13, maxWidth: 320 }}>
+        Choose a new password for your account, then use it to log in.
+      </div>
+      <input value={pw} onChange={(e) => setPw(e.target.value)} type="password" placeholder="new password (6+ characters)"
+        autoComplete="new-password" aria-label="New password"
+        className="ff-body w-full mt-4 rounded-xl px-3 py-2 outline-none" style={{ maxWidth: 320, background: C.surface, border: `1px solid ${C.border}`, color: C.ink, fontSize: 15 }} />
+      <button onClick={() => onSetPassword(pw)} disabled={authBusy || !pw}
+        className="w-full mt-3 rounded-2xl py-3" style={{ maxWidth: 320, background: C.primary, color: "#fff", opacity: authBusy || !pw ? 0.6 : 1 }}>
+        <span className="ff-body" style={{ fontWeight: 600, fontSize: 15 }}>{authBusy ? "Saving…" : "Set new password"}</span>
+      </button>
+      {authMessage && <div className="ff-body mt-3 text-center" style={{ color: C.inkSoft, fontSize: 13, maxWidth: 320 }}>{authMessage}</div>}
+    </div>
+  );
+}
+
 /* ============================== settings ============================== */
 function downloadFile(filename, content, type) {
   const blob = new Blob([content], { type });
@@ -1182,7 +1206,7 @@ function WelcomeSheet({ name, onClose, onStartTour }) {
   );
 }
 
-function SettingsSheet({ state, setState, onClose, onReset, onSyncNow, syncBusy, authUser, authBusy, authMessage, onLogIn, onCreateAccount, onSetPassword, onSignOut, onStartTour }) {
+function SettingsSheet({ state, setState, onClose, onReset, onSyncNow, syncBusy, authUser, authBusy, authMessage, onLogIn, onCreateAccount, onSetPassword, onSendReset, onSignOut, onStartTour }) {
   const [pinDraft, setPinDraft] = useState(state.settings.pin || "");
   const [emailDraft, setEmailDraft] = useState(getLastEmail());
   const [pwDraft, setPwDraft] = useState("");
@@ -1321,6 +1345,10 @@ function SettingsSheet({ state, setState, onClose, onReset, onSyncNow, syncBusy,
                     Create account
                   </button>
                 </div>
+                <button onClick={() => onSendReset(emailDraft)} disabled={authBusy || !emailDraft}
+                  className="ff-body w-full mt-2" style={{ color: C.muted, fontSize: 11, textDecoration: "underline", opacity: authBusy || !emailDraft ? 0.6 : 1 }}>
+                  Forgot password? Send a reset link
+                </button>
                 {authMessage && (
                   <div className="ff-body mt-2" style={{ color: C.inkSoft, fontSize: 12 }}>{authMessage}</div>
                 )}
@@ -1507,6 +1535,7 @@ export default function App() {
   const [authUser, setAuthUser] = useState(null);
   const [authBusy, setAuthBusy] = useState(false);
   const [authMessage, setAuthMessage] = useState("");
+  const [passwordRecovery, setPasswordRecovery] = useState(false);
 
   // Initial load: render instantly from the local copy (synchronous — no network,
   // no Supabase import), then reconcile with the cloud in the background, adopting
@@ -1560,6 +1589,11 @@ export default function App() {
     getUser().then(setAuthUser);
     return onAuthChange(async (user, event) => {
       setAuthUser(user);
+      // A password-reset link landed back on this origin with a recovery token —
+      // show the "set a new password" screen instead of running the normal
+      // sign-in sync below (there's no budget to pull yet at this point; that
+      // happens once the new password is confirmed, see finishPasswordReset).
+      if (event === "PASSWORD_RECOVERY") { setPasswordRecovery(true); return; }
       // On a genuine sign-in, the account is the source of truth: pull this
       // email's saved budget and load it, so signing in on any device brings
       // your data back. If the account has no row yet, seed it with whatever's
@@ -1705,7 +1739,7 @@ export default function App() {
     } else if (data?.user && Array.isArray(data.user.identities) && data.user.identities.length === 0) {
       // Supabase obfuscates existing emails: signUp "succeeds" but returns a user
       // with no identities and sends nothing. Don't claim an account was created.
-      setAuthMessage("That email already has an account — tap Log in instead (or use the one-time email link below).");
+      setAuthMessage("That email already has an account — tap Log in instead.");
     } else {
       setLastEmail(email);
       // If the project requires email confirmation, there's no session yet.
@@ -1720,6 +1754,46 @@ export default function App() {
     setAuthMessage("");
     const { error } = await updatePassword(password);
     setAuthMessage(error ? error.message : "Password set — you can now log in with it on any device.");
+    setAuthBusy(false);
+  }, []);
+
+  // "Forgot password?" — email a reset link. Safe to open in a browser tab (see
+  // sendPasswordReset's doc): the user sets a new password there, then logs into
+  // the installed app with it — no session needs to transfer.
+  const sendReset = useCallback(async (email) => {
+    if (!email) { setAuthMessage("Enter your email above first."); return; }
+    setAuthBusy(true);
+    setAuthMessage("");
+    try {
+      const { error } = await sendPasswordReset(email);
+      if (!error) setAuthMessage(`Check ${email} for a password reset link.`);
+      else if (/rate limit/i.test(error.message)) setAuthMessage("Too many reset emails were sent recently — wait a bit and try again.");
+      else setAuthMessage("Couldn't send the reset email — check the address and try again.");
+    } catch {
+      setAuthMessage("Couldn't reach the server — check your connection and try again.");
+    } finally {
+      setAuthBusy(false);
+    }
+  }, []);
+
+  // Complete a password reset: the recovery session from the emailed link is
+  // already active (see the PASSWORD_RECOVERY branch above), so this just sets
+  // the new password, then — since that branch skipped the normal sign-in sync —
+  // pulls this account's cloud budget the same way a fresh sign-in would.
+  const finishPasswordReset = useCallback(async (password) => {
+    if (!password || password.length < 6) { setAuthMessage("Pick a password of at least 6 characters."); return; }
+    setAuthBusy(true);
+    setAuthMessage("");
+    const { error } = await updatePassword(password);
+    if (error) {
+      setAuthMessage(error.message);
+    } else {
+      setPasswordRecovery(false);
+      setAuthMessage("");
+      const cloud = await pullCloud();
+      if (cloud) { setState(normalizeAndRoll(cloud)); showToast("Password updated — your budget is synced"); }
+      else { await saveState(stateRef.current); showToast("Password updated"); }
+    }
     setAuthBusy(false);
   }, []);
 
@@ -1743,6 +1817,10 @@ export default function App() {
     return <div className="flex items-center justify-center" style={{ minHeight: "100vh", background: C.bg }}>
       <span className="ff-body" style={{ color: C.muted }}>Loading your budget…</span>
     </div>;
+  }
+
+  if (passwordRecovery) {
+    return <PasswordRecoveryScreen onSetPassword={finishPasswordReset} authBusy={authBusy} authMessage={authMessage} />;
   }
 
   if (state.settings.pinEnabled && state.settings.pin.length === 4 && !unlocked) {
@@ -1778,7 +1856,7 @@ export default function App() {
         <SettingsSheet state={state} setState={setState} onClose={() => setShowSettings(false)} onReset={reset}
           onSyncNow={syncNow} syncBusy={syncBusy}
           authUser={authUser} authBusy={authBusy} authMessage={authMessage}
-          onLogIn={logIn} onCreateAccount={createAccount} onSetPassword={setPassword} onSignOut={handleSignOut}
+          onLogIn={logIn} onCreateAccount={createAccount} onSetPassword={setPassword} onSendReset={sendReset} onSignOut={handleSignOut}
           onStartTour={() => { setShowSettings(false); setTouring(true); }} />
       )}
       {!state.settings.hasSeenWelcome && (
