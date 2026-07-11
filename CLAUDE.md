@@ -133,9 +133,11 @@ src/
                        (matchMedia "(min-width: 1024px)", synchronous init — no flash)
     supabase.js        lazy client (dynamic import, code-split) + auth helpers:
                        signInWithPassword/signUpWithPassword/updatePassword,
-                       sendPasswordReset (fires a PASSWORD_RECOVERY auth event
-                       on redirect back), signOut/getUser/onAuthChange;
-                       everything no-ops when env vars are absent
+                       sendPasswordReset + isRecoveryLink/getUrlAuthError/
+                       completeUrlSession/clearUrlAuthParams (see "Sync model" —
+                       reset-link detection reads the URL directly, not an auth
+                       event), signOut/getUser/onAuthChange; everything no-ops
+                       when env vars are absent
     storage.js         localStorage + cloud sync scoped to the signed-in user; loadLocal()
                        is the synchronous first-paint read (no network/Supabase import) —
                        loadState() (local+cloud reconciled) is kept for callers that want
@@ -191,15 +193,28 @@ Supabase's `resetPasswordForEmail`, `redirectTo: window.location.origin`.
 Unlike the removed sign-in code/link, a reset link is fine to open in a
 browser tab even outside the installed app — the user sets a new password
 there and then just logs into the installed app normally afterward; no
-session needs to transfer between browser and app. When the link's redirect
-lands back on this origin, the Supabase client parses the recovery token from
-the URL and fires a `PASSWORD_RECOVERY` event (`onAuthChange` in App.jsx),
-which shows `PasswordRecoveryScreen` (same render-priority tier as `PinLock`)
-instead of the normal app until `finishPasswordReset` sets the new password
-and pulls the account's cloud budget. Requires this app's origin(s) —
-localhost for dev, the Vercel URL for prod — to be allow-listed as Redirect
-URLs in the Supabase dashboard (Authentication → URL Configuration), or the
-reset link won't come back to the right place.
+session needs to transfer between browser and app.
+
+Detecting the redirect does NOT rely on catching Supabase's `PASSWORD_RECOVERY`
+auth event as the primary signal — that event can fire (the client detects the
+URL as soon as `createClient()` runs) *before* this app's listener even
+attaches, since attaching it is behind an async dynamic import of the whole
+SDK; relying on it silently missed real reset links. Instead, `passwordRecovery`
+state is initialized synchronously on first render straight from the URL
+(`isRecoveryLink()` in supabase.js, checking for `type=recovery` in the hash or
+query — no client, no race), which is what actually decides whether
+`PasswordRecoveryScreen` shows (same render-priority tier as `PinLock`). The
+`PASSWORD_RECOVERY` event listener is kept only as a redundant backup.
+`completeUrlSession()` handles the PKCE variant (`?code=...` must be explicitly
+exchanged; the implicit flow's hash tokens are auto-consumed by the client).
+An expired/already-used link comes back as `#error=...` instead of a valid
+token — `getUrlAuthError()` catches that and `PasswordRecoveryScreen` shows a
+plain explanation + a way back in, rather than a form that can only fail.
+`finishPasswordReset` sets the new password, strips the token from the URL bar
+(`clearUrlAuthParams`), and pulls the account's cloud budget. Requires this
+app's origin(s) — localhost for dev, the Vercel URL for prod — to be
+allow-listed as Redirect URLs in the Supabase dashboard (Authentication → URL
+Configuration), or the link won't come back to the right place at all.
 
 **First paint never waits on the cloud**: the initial-load effect reads
 `loadLocal()` synchronously (no network, no Supabase import) and renders

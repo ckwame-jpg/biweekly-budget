@@ -14,7 +14,7 @@ import { useCalc, spendStatusKey } from "./lib/calc.js";
 import { cycleDaysFor, advanceDaysFor, nextPeriodNumber, normalizeHistory, monthlyActualsFromHistory, emptyPeriod, buildPeriodSnapshot, addDays, autoRollover } from "./lib/period.js";
 import { useReducedMotion, useCountUp, useIsDesktop } from "./lib/hooks.js";
 import { loadLocal, saveState, pullCloud, clearLocal, getLastEmail, setLastEmail, localUpdatedAt } from "./lib/storage.js";
-import { supabaseConfigured, signInWithPassword, signUpWithPassword, updatePassword, sendPasswordReset, signOut, getUser, onAuthChange } from "./lib/supabase.js";
+import { supabaseConfigured, signInWithPassword, signUpWithPassword, updatePassword, sendPasswordReset, isRecoveryLink, getUrlAuthError, completeUrlSession, clearUrlAuthParams, signOut, getUser, onAuthChange } from "./lib/supabase.js";
 
 // recharts is one of the two heaviest deps in the app (see CLAUDE.md backlog);
 // split into its own chunk and only fetched once a chart actually renders.
@@ -1086,11 +1086,30 @@ function PinLock({ pin, onUnlock }) {
   );
 }
 
-// Shown when a password-reset link redirects back here with a recovery session
-// (see the PASSWORD_RECOVERY branch in App()). Takes over the whole screen,
-// same as PinLock, since there's nothing else useful to show mid-recovery.
-function PasswordRecoveryScreen({ onSetPassword, authBusy, authMessage }) {
+// Shown when a password-reset link redirects back here (see the isRecoveryLink
+// check in App()). Takes over the whole screen, same as PinLock, since there's
+// nothing else useful to show mid-recovery. linkError means the link itself was
+// bad (expired/already used) — there's no session to set a password with, so
+// show that instead of a form that can only fail.
+function PasswordRecoveryScreen({ onSetPassword, authBusy, authMessage, linkError, onGiveUp }) {
   const [pw, setPw] = useState("");
+
+  if (linkError) {
+    return (
+      <div className="flex flex-col items-center justify-center px-6 text-center" style={{ minHeight: "100vh", background: C.bg }}>
+        <Lock size={28} color={C.coral} />
+        <div className="ff-display mt-3" style={{ color: C.ink, fontSize: 18, fontWeight: 600 }}>That reset link didn't work</div>
+        <div className="ff-body mt-2" style={{ color: C.muted, fontSize: 13, maxWidth: 320 }}>{linkError}</div>
+        <div className="ff-body mt-1" style={{ color: C.muted, fontSize: 13, maxWidth: 320 }}>
+          It may have expired or already been used — request a new one from Cloud sync.
+        </div>
+        <button onClick={onGiveUp} className="w-full mt-4 rounded-2xl py-3" style={{ maxWidth: 320, background: C.primary, color: "#fff" }}>
+          <span className="ff-body" style={{ fontWeight: 600, fontSize: 15 }}>Back to the app</span>
+        </button>
+      </div>
+    );
+  }
+
   return (
     <div className="flex flex-col items-center justify-center px-6" style={{ minHeight: "100vh", background: C.bg }}>
       <Lock size={28} color={C.primary} />
@@ -1535,7 +1554,13 @@ export default function App() {
   const [authUser, setAuthUser] = useState(null);
   const [authBusy, setAuthBusy] = useState(false);
   const [authMessage, setAuthMessage] = useState("");
-  const [passwordRecovery, setPasswordRecovery] = useState(false);
+  // Read synchronously from the URL on first render (see isRecoveryLink's doc) —
+  // not set via a Supabase auth event, which can fire before this app's listener
+  // even attaches and get silently missed.
+  const [passwordRecovery, setPasswordRecovery] = useState(() => supabaseConfigured() && isRecoveryLink());
+  const [linkError, setLinkError] = useState(() => (supabaseConfigured() ? getUrlAuthError() : null));
+  const passwordRecoveryRef = useRef(passwordRecovery);
+  passwordRecoveryRef.current = passwordRecovery; // read inside the onAuthChange effect below (mounted once, [] deps)
 
   // Initial load: render instantly from the local copy (synchronous — no network,
   // no Supabase import), then reconcile with the cloud in the background, adopting
@@ -1586,19 +1611,25 @@ export default function App() {
   // track sign-in state for cloud sync (Phase 3 real auth — see CLAUDE.md and supabase/schema.sql)
   useEffect(() => {
     if (!supabaseConfigured()) return;
-    getUser().then(setAuthUser);
+    // completeUrlSession: only does anything for a PKCE reset link (?code=...);
+    // a no-op otherwise. Needed so the recovery session is actually established —
+    // passwordRecovery being true (from the synchronous URL check above) only
+    // controls what screen is SHOWN, it doesn't itself create the session that
+    // updatePassword() needs.
+    completeUrlSession().then(() => getUser().then(setAuthUser));
     return onAuthChange(async (user, event) => {
       setAuthUser(user);
-      // A password-reset link landed back on this origin with a recovery token —
-      // show the "set a new password" screen instead of running the normal
-      // sign-in sync below (there's no budget to pull yet at this point; that
-      // happens once the new password is confirmed, see finishPasswordReset).
+      // Belt-and-suspenders: also catch it here in case the URL-check above
+      // somehow missed a case the client itself still recognizes.
       if (event === "PASSWORD_RECOVERY") { setPasswordRecovery(true); return; }
       // On a genuine sign-in, the account is the source of truth: pull this
       // email's saved budget and load it, so signing in on any device brings
       // your data back. If the account has no row yet, seed it with whatever's
-      // on this device.
-      if (user && event === "SIGNED_IN") {
+      // on this device. Skipped mid-recovery — some flows fire SIGNED_IN when
+      // exchanging the reset link's code, and that sync should wait until
+      // finishPasswordReset confirms the new password, not run in the background
+      // while the recovery screen is showing.
+      if (user && event === "SIGNED_IN" && !passwordRecoveryRef.current) {
         if (user.email) setLastEmail(user.email);
         const cloud = await pullCloud();
         if (cloud) {
@@ -1613,6 +1644,16 @@ export default function App() {
       }
     });
   }, []);
+
+  // Strip the recovery token/code out of the URL bar once there's been time for
+  // the client to consume it (its own detection + completeUrlSession above both
+  // run well within this), so it doesn't linger visibly or in browser history,
+  // and reloading the page doesn't re-trigger recovery mode from a stale link.
+  useEffect(() => {
+    if (!passwordRecovery && !linkError) return;
+    const t = setTimeout(() => clearUrlAuthParams(), 1000);
+    return () => clearTimeout(t);
+  }, [passwordRecovery, linkError]);
 
   // "classic" theme follows the dark mode toggle; the fun themes are self-contained
   // looks (colors + fonts + accents in index.css) and ignore dark mode.
@@ -1790,6 +1831,7 @@ export default function App() {
     } else {
       setPasswordRecovery(false);
       setAuthMessage("");
+      clearUrlAuthParams(); // the delayed cleanup effect won't run now that passwordRecovery flipped false
       const cloud = await pullCloud();
       if (cloud) { setState(normalizeAndRoll(cloud)); showToast("Password updated — your budget is synced"); }
       else { await saveState(stateRef.current); showToast("Password updated"); }
@@ -1819,8 +1861,9 @@ export default function App() {
     </div>;
   }
 
-  if (passwordRecovery) {
-    return <PasswordRecoveryScreen onSetPassword={finishPasswordReset} authBusy={authBusy} authMessage={authMessage} />;
+  if (passwordRecovery || linkError) {
+    return <PasswordRecoveryScreen onSetPassword={finishPasswordReset} authBusy={authBusy} authMessage={authMessage}
+      linkError={linkError} onGiveUp={() => { clearUrlAuthParams(); setLinkError(null); setPasswordRecovery(false); }} />;
   }
 
   if (state.settings.pinEnabled && state.settings.pin.length === 4 && !unlocked) {
