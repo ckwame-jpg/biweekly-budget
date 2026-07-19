@@ -17,6 +17,13 @@ personal and encouraging, **not** corporate banking. Mobile-first.
   Vercel builds the `main` branch — local work is on `master`, push to both).
 - **Phase 4 (now):** the app is live and in daily use; work is iterative polish and
   fixes driven by the user's real usage. **This is where you are now.**
+- **Phase 5 (in progress):** prep for a *public* launch. Decided direction: launch
+  as a **free public web/PWA at a real domain first** (native app-store packaging via
+  Capacitor is DEFERRED until demand is validated — do NOT scaffold it yet), keep the
+  app free, and measure appetite for a future paid **"Plus"** tier with a lightweight
+  in-app interest button (see "Public-launch scaffolding" below). Monetization model
+  chosen: freemium subscription later (free on-device core; Plus = cloud sync +
+  premium themes), NOT ads and NOT selling data. See the Backlog for open manual steps.
 
 ## How to run
 ```bash
@@ -145,9 +152,21 @@ src/
                        remembers last sign-in email; clearLocal on sign-out. Tested:
                        storage.test.js.
 e2e/touch.spec.js      Playwright touch-event test (iPhone 13 profile)
-supabase/schema.sql    budget_state(user_id uuid pk references auth.users, state jsonb, updated_at),
-                       RLS scoped to auth.uid() — see "Sync model" below
-public/                icons + favicon; vite-plugin-pwa generates the manifest/SW
+supabase/schema.sql    budget_state(user_id uuid pk references auth.users, state jsonb, updated_at)
+                       + plus_interest(id, email, source, created_at) — RLS scoped to
+                       auth.uid() for budget_state; plus_interest is INSERT-only (see
+                       "Public-launch scaffolding")
+supabase/functions/delete-account/index.ts
+                       Deno Edge Function: deletes the CALLER's own auth user (id taken
+                       from their JWT, never the body) with the service role key, which
+                       can't live in the browser. Deployed live (verify_jwt on). Backs
+                       the in-app "Delete my account" button (App Store 5.1.1(v)).
+public/                icons + favicon; vite-plugin-pwa generates the manifest/SW.
+                       Also public/privacy.html + public/terms.html — standalone static
+                       legal pages served at /privacy.html and /terms.html (Vercel serves
+                       real files before the SPA rewrite). Both still contain a
+                       REPLACE_WITH_SUPPORT_EMAIL placeholder — swap in a real support
+                       address before public launch.
 ```
 
 ### Data model (the whole app state, persisted as one JSON blob)
@@ -279,6 +298,35 @@ desktop state or logic.
 - Make surgical changes; don't rewrite working screens to "improve" them.
 - Quality floor: responsive to ~360px wide, visible focus, respects reduced motion.
 
+## Public-launch scaffolding (Phase 5)
+Direction chosen with the user: **free public web/PWA launch at a real domain
+first**; validate demand before any paid tier or native app-store packaging.
+- **Account deletion** — `deleteAccount()` (supabase.js) → the `delete-account`
+  Edge Function (deployed live). Surfaced as "Delete my account permanently" in
+  the signed-in Cloud-sync section of `SettingsSheet`. Required by Apple 5.1.1(v)
+  for any app with in-app sign-up; also just correct for a public app.
+- **Legal pages** — `public/privacy.html` + `public/terms.html`, linked from the
+  Settings footer and required by both stores / for public use. Honest about what's
+  collected (email + budget numbers), Supabase/Vercel as processors, no ads/tracking,
+  no data sale. **Contains a REPLACE_WITH_SUPPORT_EMAIL placeholder — must be filled.**
+- **"Plus — coming soon"** — `PlusInterestCard` in `SettingsSheet` + `recordPlusInterest()`
+  (supabase.js) → the `plus_interest` INSERT-only table. A DEMAND SIGNAL, not a
+  purchase or a real paywall: one tap (+ optional email) records interest, deduped
+  per-device via a localStorage flag. Soft-fails silently (never blocks the user) and
+  no-ops without cloud config. This is deliberately the *only* monetization surface
+  for now — no billing/RevenueCat yet; add that only once demand shows up.
+- **Share meta** — Open Graph / Twitter tags in `index.html` for link previews.
+
+Open MANUAL steps before public launch (assistant can't do these):
+- Apply the `plus_interest` table to prod (SQL is in `schema.sql`; run it in the
+  Supabase SQL editor, or approve the migration). Until then the Plus button just
+  soft-fails.
+- Fill REPLACE_WITH_SUPPORT_EMAIL in both legal pages with a real support address
+  (user leaning toward a dedicated Gmail or a custom-domain address — TBD).
+- Register a real domain + point it at Vercel; add it to Supabase Redirect URLs.
+- Custom SMTP (Resend) + raised email rate limit in the Supabase dashboard (in
+  progress) so reset/confirmation emails deliver reliably at public volume.
+
 ## Backlog
 Done: everything through Phase 3 — live Vercel deploy + live Supabase (email +
 password auth only, RLS), income auto-tracking with per-period override,
@@ -312,4 +360,11 @@ Remaining / known limits:
    links land on an error page instead of `PasswordRecoveryScreen`, check that
    first.
 3. Debt payoff ignores interest by design; optional APR field if requested.
-4. App-store packaging (TWA/Capacitor) discussed, not wanted for now — it's a PWA.
+4. App-store packaging (Capacitor) is DEFERRED — decided to launch as a free public
+   web/PWA at a real domain first and validate demand before wrapping natively. When
+   revisited: Capacitor (not bare TWA) for a real native shell; iOS build needs a Mac
+   (or cloud-Mac/CI) since the owner is on Windows, plus the $99/yr Apple + $25 Google
+   accounts. See "Public-launch scaffolding" above.
+5. Going public multiplies infra cost/scrutiny: Supabase free tier won't hold public
+   traffic (paid plan + email + egress), stores take 15–30%, and the soft client-side
+   PIN is NOT real security — harden auth expectations before a true multi-tenant push.

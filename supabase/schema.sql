@@ -27,3 +27,24 @@ create policy "owner read/write" on public.budget_state
 -- auth.uid() without the owner signing in first. Export your data from the app
 -- (Settings -> Backup -> Export JSON) before switching, then re-import it once
 -- you've signed in on the new schema.
+
+-- ---------------------------------------------------------------------------
+-- Plus interest (demand signal for a future paid tier). Write-only from the
+-- client: anyone — signed in or not — may register interest, but there is NO
+-- select policy, so the anon/authenticated client can never read the list back.
+-- The owner reads it in the Supabase dashboard (Table editor / SQL) instead.
+-- Collects at most an optional email so we can notify people when Plus ships.
+create table if not exists public.plus_interest (
+  id          uuid primary key default gen_random_uuid(),
+  email       text,
+  source      text,
+  created_at  timestamptz not null default now()
+);
+
+alter table public.plus_interest enable row level security;
+
+drop policy if exists "anyone can register interest" on public.plus_interest;
+create policy "anyone can register interest" on public.plus_interest
+  for insert
+  to anon, authenticated
+  with check (true);

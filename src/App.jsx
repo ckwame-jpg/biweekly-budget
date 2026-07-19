@@ -14,7 +14,7 @@ import { useCalc, spendStatusKey } from "./lib/calc.js";
 import { cycleDaysFor, advanceDaysFor, nextPeriodNumber, normalizeHistory, monthlyActualsFromHistory, emptyPeriod, buildPeriodSnapshot, addDays, autoRollover } from "./lib/period.js";
 import { useReducedMotion, useCountUp, useIsDesktop } from "./lib/hooks.js";
 import { loadLocal, saveState, pullCloud, clearLocal, getLastEmail, setLastEmail, localUpdatedAt } from "./lib/storage.js";
-import { supabaseConfigured, signInWithPassword, signUpWithPassword, updatePassword, sendPasswordReset, isRecoveryLink, getUrlAuthError, completeUrlSession, clearUrlAuthParams, signOut, getUser, onAuthChange } from "./lib/supabase.js";
+import { supabaseConfigured, signInWithPassword, signUpWithPassword, updatePassword, sendPasswordReset, isRecoveryLink, getUrlAuthError, completeUrlSession, clearUrlAuthParams, signOut, deleteAccount, recordPlusInterest, getUser, onAuthChange } from "./lib/supabase.js";
 
 // recharts is one of the two heaviest deps in the app (see CLAUDE.md backlog);
 // split into its own chunk and only fetched once a chart actually renders.
@@ -1225,7 +1225,62 @@ function WelcomeSheet({ name, onClose, onStartTour }) {
   );
 }
 
-function SettingsSheet({ state, setState, onClose, onReset, onSyncNow, syncBusy, authUser, authBusy, authMessage, onLogIn, onCreateAccount, onSetPassword, onSendReset, onSignOut, onStartTour }) {
+// "Plus — coming soon" — a demand signal for a future paid tier, not a purchase.
+// One tap (with an optional email) records interest via a write-only Supabase row.
+// We remember on this device that they've already raised their hand, so it flips to
+// a thank-you instead of nagging. Entirely optional and no-ops without cloud config.
+const PLUS_INTEREST_KEY = "biweekly-budget-plus-interest";
+function PlusInterestCard({ authUser }) {
+  const [done, setDone] = useState(() => {
+    try { return localStorage.getItem(PLUS_INTEREST_KEY) === "1"; } catch { return false; }
+  });
+  const [emailDraft, setEmailDraft] = useState("");
+  const [busy, setBusy] = useState(false);
+  if (!supabaseConfigured()) return null;
+
+  const raiseHand = async () => {
+    setBusy(true);
+    const email = authUser?.email || emailDraft.trim() || null;
+    // Soft-fail: this is a nice-to-have signal, never block the user on it. Even if
+    // the table isn't there yet or they're offline, thank them and remember locally.
+    try { await recordPlusInterest(email, "settings"); } catch { /* ignore */ }
+    try { localStorage.setItem(PLUS_INTEREST_KEY, "1"); } catch { /* ignore */ }
+    setBusy(false);
+    setDone(true);
+  };
+
+  return (
+    <div className="rounded-2xl p-3 mb-4" style={{ background: C.bg, border: `1px solid ${C.border}` }}>
+      <div className="flex items-center gap-2 mb-1">
+        <Sparkles size={15} color={C.gold || C.primary} />
+        <span className="ff-body" style={{ color: C.ink, fontSize: 14, fontWeight: 600 }}>Plus — coming soon</span>
+      </div>
+      {done ? (
+        <div className="ff-body" style={{ color: C.inkSoft, fontSize: 12 }}>
+          Thanks! We&rsquo;ll let you know the moment Plus is ready. 💚
+        </div>
+      ) : (
+        <>
+          <div className="ff-body" style={{ color: C.muted, fontSize: 12, marginBottom: 8 }}>
+            Cloud sync across devices, premium themes, and more — for a small price down the road.
+            Want it? Tap below and we&rsquo;ll tell you when it lands. The app stays free to use.
+          </div>
+          {!authUser && (
+            <input value={emailDraft} placeholder="email (optional)" type="email" autoComplete="email"
+              onChange={(e) => setEmailDraft(e.target.value)}
+              className="ff-body w-full rounded-xl px-3 py-2 mb-2 outline-none" style={{ background: C.surface, border: `1px solid ${C.border}`, color: C.ink, fontSize: 14 }} />
+          )}
+          <button onClick={raiseHand} disabled={busy}
+            className="ff-body w-full rounded-xl py-2" style={{ background: C.primary, color: "#fff", fontWeight: 600, fontSize: 13, opacity: busy ? 0.6 : 1 }}>
+            {busy ? "…" : "I'd want Plus"}
+          </button>
+        </>
+      )}
+    </div>
+  );
+}
+
+function SettingsSheet({ state, setState, onClose, onReset, onSyncNow, syncBusy, authUser, authBusy, authMessage, onLogIn, onCreateAccount, onSetPassword, onSendReset, onSignOut, onDeleteAccount, onStartTour }) {
   const [pinDraft, setPinDraft] = useState(state.settings.pin || "");
   const [emailDraft, setEmailDraft] = useState(getLastEmail());
   const [pwDraft, setPwDraft] = useState("");
@@ -1342,6 +1397,10 @@ function SettingsSheet({ state, setState, onClose, onReset, onSyncNow, syncBusy,
                 {authMessage && (
                   <div className="ff-body mt-2" style={{ color: C.inkSoft, fontSize: 12 }}>{authMessage}</div>
                 )}
+                <button onClick={onDeleteAccount} disabled={authBusy}
+                  className="ff-body w-full mt-3 pt-2" style={{ color: C.coral, fontSize: 11, textDecoration: "underline", opacity: authBusy ? 0.6 : 1, borderTop: `1px solid ${C.border}` }}>
+                  Delete my account permanently
+                </button>
               </>
             ) : (
               <>
@@ -1379,6 +1438,9 @@ function SettingsSheet({ state, setState, onClose, onReset, onSyncNow, syncBusy,
             </div>
           )}
         </div>
+
+        {/* plus interest — demand signal for a future paid tier */}
+        <PlusInterestCard authUser={authUser} />
 
         {/* backup */}
         <div data-tour="backup-section" className="rounded-2xl p-3 mb-4" style={{ background: C.bg, border: `1px solid ${C.border}` }}>
@@ -1461,6 +1523,12 @@ function SettingsSheet({ state, setState, onClose, onReset, onSyncNow, syncBusy,
         <button onClick={onReset} className="w-full flex items-center justify-center gap-2 rounded-2xl py-3 mt-2" style={{ background: C.surfaceDanger, color: C.coral }}>
           <RotateCcw size={16} /> <span className="ff-body" style={{ fontWeight: 600, fontSize: 14 }}>Reset all data</span>
         </button>
+
+        <div className="flex items-center justify-center gap-3 mt-4">
+          <a href="/privacy.html" target="_blank" rel="noopener" className="ff-body" style={{ color: C.muted, fontSize: 11, textDecoration: "underline" }}>Privacy</a>
+          <span style={{ color: C.border, fontSize: 11 }}>·</span>
+          <a href="/terms.html" target="_blank" rel="noopener" className="ff-body" style={{ color: C.muted, fontSize: 11, textDecoration: "underline" }}>Terms</a>
+        </div>
       </div>
     </div>
   );
@@ -1839,6 +1907,25 @@ export default function App() {
     setAuthBusy(false);
   }, []);
 
+  // Permanently delete this account (auth user + cloud row). Wipes the local copy
+  // too, so nothing of theirs lingers on the device, then reloads to a clean slate.
+  const handleDeleteAccount = useCallback(async () => {
+    if (!window.confirm(
+      "Permanently delete your account? This erases your cloud data and this " +
+      "account itself. Your local budget on this device is cleared too. This can't be undone."
+    )) return;
+    setAuthBusy(true);
+    setAuthMessage("");
+    const { error } = await deleteAccount();
+    if (error) {
+      setAuthMessage("Couldn't delete the account — please try again, or contact support.");
+      setAuthBusy(false);
+      return;
+    }
+    clearLocal();
+    window.location.reload();
+  }, []);
+
   const handleSignOut = useCallback(async () => {
     // Flush the latest to this account's cloud while still signed in. Only wipe the
     // device once that write has actually landed — otherwise an offline sign-out
@@ -1899,7 +1986,7 @@ export default function App() {
         <SettingsSheet state={state} setState={setState} onClose={() => setShowSettings(false)} onReset={reset}
           onSyncNow={syncNow} syncBusy={syncBusy}
           authUser={authUser} authBusy={authBusy} authMessage={authMessage}
-          onLogIn={logIn} onCreateAccount={createAccount} onSetPassword={setPassword} onSendReset={sendReset} onSignOut={handleSignOut}
+          onLogIn={logIn} onCreateAccount={createAccount} onSetPassword={setPassword} onSendReset={sendReset} onSignOut={handleSignOut} onDeleteAccount={handleDeleteAccount}
           onStartTour={() => { setShowSettings(false); setTouring(true); }} />
       )}
       {!state.settings.hasSeenWelcome && (

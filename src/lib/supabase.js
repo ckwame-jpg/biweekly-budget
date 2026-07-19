@@ -126,6 +126,42 @@ export async function signOut() {
   await sb.auth.signOut();
 }
 
+/**
+ * Permanently delete the signed-in user's own account (auth user + their cloud
+ * row, which cascades off the FK — see schema.sql). Calls the `delete-account`
+ * Edge Function, which does the privileged deletion server-side with the service
+ * role key; the browser only ever holds the anon key, so it can't do this itself.
+ * The user's own access token is passed as the bearer credential, so the function
+ * can only ever delete the caller — never an id supplied by the client. Required
+ * by App Store Guideline 5.1.1(v) for any app with in-app account creation.
+ * Returns { error } on failure, matching the other auth helpers.
+ */
+export async function deleteAccount() {
+  const sb = await getSupabase();
+  if (!sb) return { error: new Error("Supabase is not configured") };
+  try {
+    const { error } = await sb.functions.invoke("delete-account", { method: "POST" });
+    if (error) return { error };
+    await sb.auth.signOut();
+    return { error: null };
+  } catch (e) {
+    return { error: e instanceof Error ? e : new Error("Couldn't delete the account") };
+  }
+}
+
+/**
+ * Register interest in a future paid "Plus" tier — a demand signal, not a
+ * purchase. Inserts a write-only row (see plus_interest in schema.sql; the
+ * client can't read the list back). `email` is optional; `source` tags where
+ * the click came from. Returns { error } like the other helpers; a missing
+ * table (not yet migrated) surfaces as an error the caller can treat softly.
+ */
+export async function recordPlusInterest(email, source = "settings") {
+  const sb = await getSupabase();
+  if (!sb) return { error: new Error("Supabase is not configured") };
+  return sb.from("plus_interest").insert({ email: email || null, source });
+}
+
 export async function getUser() {
   const sb = await getSupabase();
   if (!sb) return null;
