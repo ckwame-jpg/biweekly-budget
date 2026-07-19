@@ -30,12 +30,18 @@ personal and encouraging, **not** corporate banking. Mobile-first.
 npm install
 npm run dev          # http://localhost:5173
 npm test             # Vitest: calc/period/defaults/format/storage .test.js — keep green
-npx playwright test  # touch-event e2e (iPhone profile; needs dev server on :5173)
+npx playwright test  # touch-event e2e (iPhone profile; auto-starts the dev server itself)
 npm run build        # production build in dist/
 npm run preview      # serve the build locally (test the PWA/service worker here)
 ```
 Node 18+ required for the dev server. Supabase is **optional** — the app runs fully
 on-device without it; sync turns on once `.env` is filled (see README).
+
+**CI** (`.github/workflows/ci.yml`): on every push to `master`/`main` and every PR,
+GitHub Actions runs `npm ci` → vitest → build → the Playwright touch e2e (WebKit).
+It needs no secrets (the app builds/tests fully without Supabase env). This guards
+the branch Vercel deploys, so a broken commit from either developer is caught before
+it ships. Playwright's `webServer` config boots the dev server in CI automatically.
 
 ## The product, in two inputs
 The user only ever enters **(1) income** and **(2) spending**. Everything else is
